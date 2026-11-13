@@ -12,24 +12,23 @@ enum TimerNames {
 	TIMER_COUNT
 };
 
-// what the UI edits of how the simulation is shown
-struct Visualizations
+inline Visualizations get_default_visualizations()
 {
-	Visualization food{.color = glm::vec3(0.0f), .color_map = ColorMap::Viridis};
-	// in dark yellow
-	Visualization food_pheromone{.color = glm::vec3(0.0f, 0.4f, 0.4f), .color_map = ColorMap::CustomColor};
-	Visualization nest{.color = glm::vec3(0.0f), .color_map = ColorMap::Plasma};
-	// in dark blue
-	Visualization nest_pheromone{.color = glm::vec3(0.0f, 0.0f, 0.4f), .color_map = ColorMap::CustomColor};
-	// blue
-	glm::vec3 ant_wo_food_color = glm::vec3(0.0f, 0.0f, 1.0f);
-	// the leading edge in pink
-	glm::vec3 ant_wo_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
-	// yellow
-	glm::vec3 ant_w_food_color = glm::vec3(0.0f, 1.0f, 1.0f);
-	// the leading edge in pink
-	glm::vec3 ant_w_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
-};
+	Visualizations visualizations;
+	visualizations.food = Visualization{.color = glm::vec3(0.0f), .color_map = ColorMap::Viridis};
+	// dark cyan
+	visualizations.food_pheromone = Visualization{.color = glm::vec3(0.0f, 0.4f, 0.4f), .color_map = ColorMap::CustomColor};
+	visualizations.nest = Visualization{.color = glm::vec3(0.0f), .color_map = ColorMap::Plasma};
+	// dark blue
+	visualizations.nest_pheromone = Visualization{.color = glm::vec3(0.0f, 0.0f, 0.4f), .color_map = ColorMap::CustomColor};
+	// blue with a pink leading edge
+	visualizations.ant_wo_food_color = glm::vec3(0.0f, 0.0f, 1.0f);
+	visualizations.ant_wo_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
+	// cyan with a pink leading edge
+	visualizations.ant_w_food_color = glm::vec3(0.0f, 1.0f, 1.0f);
+	visualizations.ant_w_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
+	return visualizations;
+}
 
 // The part of the world the window shows: as tall as height and as wide as the window's aspect ratio makes it, so that a
 // world unit is as long along both axes on the screen.
@@ -47,7 +46,7 @@ struct View
 
 struct AppState
 {
-	Visualizations visualizations;
+	Visualizations visualizations = get_default_visualizations();
 	glm::vec2 add_food_pos = glm::vec2(0.0f, 0.0f);
 	int32_t add_food_amount = 0;
 	View view;

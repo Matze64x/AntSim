@@ -264,7 +264,7 @@ float4 fragment_main(AntVertex input) : SV_Target
 		const float angle_to_front = acos(dot(normalize(float2(1.0, 1.0)), normalize(input.uv)));
 		marker_weight = 1.0 - smoothstep(radians(-15.0), radians(45.0), angle_to_front);
 	}
-	const float3 body_color = input.has_food != 0 ? ub.ant_w_food_color : ub.ant_wo_food_color;
-	const float3 marker_color = input.has_food != 0 ? ub.ant_w_food_dir_color : ub.ant_wo_food_dir_color;
+	const float3 body_color = input.has_food != 0 ? ub.visualizations.ant_w_food_color : ub.visualizations.ant_wo_food_color;
+	const float3 marker_color = input.has_food != 0 ? ub.visualizations.ant_w_food_dir_color : ub.visualizations.ant_wo_food_dir_color;
 	return float4(lerp(body_color, marker_color, marker_weight), 1.0);
 }

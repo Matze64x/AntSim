@@ -71,17 +71,17 @@ float4 fragment_main(ScreenVertex input) : SV_Target
 	const UniformBufferData ub = vkte::get_single_element_buffer<UniformBufferData>(pc.uniform_buffer);
 	const Nest nest = vkte::get_single_element_buffer<Nest>(pc.nest);
 	const float2 pos = input.screen_uv * (ub.range_max - ub.range_min) + ub.range_min;
-	if (distance(pos, nest.pos) < nest.get_radius() && ub.nest.is_shown())
+	if (distance(pos, nest.pos) < nest.get_radius() && ub.visualizations.nest.is_shown())
 	{
-		return ub.nest.get_color(nest.get_level_progress());
+		return ub.visualizations.nest.get_color(nest.get_level_progress());
 	}
 	const HashGrid hash_grid = get_hash_grid();
 	const Optional<uint> slot = hash_grid.get_cell(get_hash_grid_pos(pos));
 	if (!slot.hasValue) return float4(0.0, 0.0, 0.0, 1.0);
 	const HashGridCell cell = hash_grid.cells[slot.value];
 	const float pheromone_freshness = (PHEROMONE_LIFETIME - cell.pheromone_lifetime) / PHEROMONE_LIFETIME;
-	if (cell.food_amount > 0 && ub.food.is_shown()) return ub.food.get_color(float(cell.food_amount) / 255.0);
-	if (cell.pheromone == Pheromone::Food && ub.food_pheromone.is_shown()) return ub.food_pheromone.get_color(pheromone_freshness);
-	if (cell.pheromone == Pheromone::Nest && ub.nest_pheromone.is_shown()) return ub.nest_pheromone.get_color(pheromone_freshness);
+	if (cell.food_amount > 0 && ub.visualizations.food.is_shown()) return ub.visualizations.food.get_color(float(cell.food_amount) / 255.0);
+	if (cell.pheromone == Pheromone::Food && ub.visualizations.food_pheromone.is_shown()) return ub.visualizations.food_pheromone.get_color(pheromone_freshness);
+	if (cell.pheromone == Pheromone::Nest && ub.visualizations.nest_pheromone.is_shown()) return ub.visualizations.nest_pheromone.get_color(pheromone_freshness);
 	return float4(0.0, 0.0, 0.0, 1.0);
 }

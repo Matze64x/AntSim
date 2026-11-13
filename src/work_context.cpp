@@ -139,15 +139,7 @@ void WorkContext::update_uniform_buffer(AppState& app_state)
 {
 	uniform_buffer_data.range_min = app_state.view.get_min(app_state.window_size);
 	uniform_buffer_data.range_max = app_state.view.get_max(app_state.window_size);
-	const Visualizations& visualizations = app_state.visualizations;
-	uniform_buffer_data.food = visualizations.food;
-	uniform_buffer_data.food_pheromone = visualizations.food_pheromone;
-	uniform_buffer_data.nest = visualizations.nest;
-	uniform_buffer_data.nest_pheromone = visualizations.nest_pheromone;
-	uniform_buffer_data.ant_wo_food_color = visualizations.ant_wo_food_color;
-	uniform_buffer_data.ant_wo_food_dir_color = visualizations.ant_wo_food_dir_color;
-	uniform_buffer_data.ant_w_food_color = visualizations.ant_w_food_color;
-	uniform_buffer_data.ant_w_food_dir_color = visualizations.ant_w_food_dir_color;
+	uniform_buffer_data.visualizations = app_state.visualizations;
 	uniform_buffer_data.frame_idx = app_state.total_frames;
 	uniform_buffer_data.frame_time = app_state.capped_frame_time;
 	uniform_buffer_data.total_time = app_state.total_time;
