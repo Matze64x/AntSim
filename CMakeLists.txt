@@ -23,9 +23,8 @@ set(ENABLE_VKTE_LOGGING ON)
 add_subdirectory(${VKTE_DIR})
 
 set(SOURCE_FILES
-	src/ants.cpp
 	src/application.cpp
-	src/hash_grid.cpp
+	src/simulation.cpp
 	src/work_context.cpp
 )
 

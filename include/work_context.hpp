@@ -3,10 +3,9 @@
 #include <array>
 #include <vector>
 
-#include "ants.hpp"
 #include "app_state.hpp"
-#include "hash_grid.hpp"
 #include "shared/push_constants.slang"
+#include "simulation.hpp"
 #include "shared/uniform_buffer.slang"
 #include "util/timer.hpp"
 #include "glm/vec2.hpp"
@@ -31,8 +30,7 @@ public:
 
 private:
 	vkte::Engine& engine;
-	Ants ants;
-	HashGrid hash_grid;
+	Simulation simulation;
 	vkte::UI& ui;
 	std::array<std::array<vkte::SemaphoreHandle, SEMAPHORE_COUNT>, vkte::frames_in_flight> frame_semaphores;
 	std::vector<vkte::SemaphoreHandle> swapchain_semaphores;
@@ -43,7 +41,6 @@ private:
 	UniformBufferData uniform_buffer_data{};
 
 	void update_uniform_buffer(AppState& app_state);
-	PushConstants get_push_constants(const AppState& app_state) const;
 	void update_frame_times(AppState& app_state);
 	void record_and_present(AppState& app_state);
 	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset);

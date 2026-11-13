@@ -11,10 +11,9 @@
 #include "vkte/image.hpp"
 
 WorkContext::WorkContext(vkte::Engine& engine, AppState& app_state)
-	: engine(engine), ants(engine, app_state.ant_count), hash_grid(engine, app_state.hash_grid_capacity), ui(engine.get_ui())
+	: engine(engine), simulation(engine, app_state.ant_count, app_state.hash_grid_capacity), ui(engine.get_ui())
 {
-	engine.register_component(ants);
-	engine.register_component(hash_grid);
+	engine.register_component(simulation);
 
 	vkte::Command& command = engine.get_command();
 	vkte::Swapchain& swapchain = engine.get_swapchain();
@@ -99,7 +98,7 @@ void WorkContext::record_and_present(AppState& app_state)
 	const bool reset = std::exchange(app_state.reset_simulation, false);
 	if (reset) app_state.total_time = 0.0f;
 	update_uniform_buffer(app_state);
-	const PushConstants pc = get_push_constants(app_state);
+	const PushConstants pc = simulation.get_push_constants(uniform_buffer_handles[current_frame], app_state.add_food_pos, app_state.add_food_amount);
 	vk::CommandBuffer& cb = command.begin(cb_handles[current_frame]);
 	record_simulation(cb, pc, reset);
 	record_rendering(cb, image_idx.value, app_state, pc);
@@ -145,37 +144,13 @@ void WorkContext::update_uniform_buffer(AppState& app_state)
 	engine.get_memory_manager().get_buffer(uniform_buffer_handles[engine.get_current_frame()]).update_data(uniform_buffer_data);
 }
 
-PushConstants WorkContext::get_push_constants(const AppState& app_state) const
-{
-	PushConstants pc{};
-	pc.ants = ants.get_ants_buffer();
-	pc.nest = ants.get_nest_buffer();
-	pc.hash_grid = hash_grid.get_buffer();
-	pc.uniform_buffer = uniform_buffer_handles[engine.get_current_frame()];
-	pc.ant_count = app_state.ant_count;
-	pc.hash_grid_capacity = app_state.hash_grid_capacity;
-	pc.food_pos = app_state.add_food_pos;
-	pc.food_amount = app_state.add_food_amount;
-	return pc;
-}
-
 void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset)
 {
 	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[engine.get_current_frame()]);
-	if (reset)
-	{
-		ants.reset(cb);
-		hash_grid.reset(cb);
-		transfer_to_compute_barrier(cb);
-	}
+	if (reset) simulation.reset(cb);
 	device_timer.reset(cb, TIMER_SIMULATION);
 	device_timer.start(cb, TIMER_SIMULATION, vk::PipelineStageFlagBits2::eComputeShader);
-	if (pc.food_amount > 0)
-	{
-		hash_grid.add_food(cb, pc);
-		compute_to_compute_barrier(cb);
-	}
-	ants.compute(cb, pc);
+	simulation.step(cb, pc);
 	device_timer.stop(cb, TIMER_SIMULATION, vk::PipelineStageFlagBits2::eComputeShader);
 	compute_to_graphics_barrier(cb);
 }
@@ -274,9 +249,7 @@ void WorkContext::record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, Ap
 	scissor.extent = swapchain.get_extent();
 	cb.setScissorWithCount(scissor);
 
-	// without a depth attachment, later draws cover earlier ones: the ants go on top of the grid
-	hash_grid.draw(cb, pc);
-	ants.draw(cb, pc);
+	simulation.draw(cb, pc);
 	if (app_state.show_ui) render_ui(cb, app_state);
 	else skip_ui();
 	cb.endRendering();
