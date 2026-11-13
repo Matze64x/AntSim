@@ -27,7 +27,6 @@ set(SOURCE_FILES
 	src/application.cpp
 	src/hash_grid.cpp
 	src/work_context.cpp
-	src/util/random_generator.cpp
 )
 
 add_executable(AntSim src/main.cpp ${SOURCE_FILES})
