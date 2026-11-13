@@ -9,16 +9,6 @@
 #include "vkte/buffer.hpp"
 #include "vkte/image.hpp"
 
-namespace Timeline
-{
-enum TimelineStep
-{
-	COMPUTE = 0,
-	STEPS_PER_FRAME = 1
-};
-static uint64_t get_value(TimelineStep step, uint64_t frame) { return frame * STEPS_PER_FRAME + step + 1; }
-} // namespace Timeline
-
 WorkContext::WorkContext(vkte::Engine& engine, AppState& app_state)
 	: engine(engine), ants(engine, app_state.ant_count), hash_grid(engine, app_state.hash_grid_capacity), ui(engine.get_ui())
 {
@@ -32,12 +22,10 @@ WorkContext::WorkContext(vkte::Engine& engine, AppState& app_state)
 	{
 		for (uint32_t s = 0; s < SEMAPHORE_COUNT; s++) frame_semaphores[i][s] = engine.add_semaphore();
 		device_timer_handles[i] = engine.add_device_timer(TIMER_COUNT);
-		compute_cb_handles[i] = command.add_command_buffer(QueueFamilyFlags::Compute);
-		graphics_cb_handles[i] = command.add_command_buffer(QueueFamilyFlags::Graphics);
+		cb_handles[i] = command.add_command_buffer(QueueFamilyFlags::Graphics);
 	}
 	swapchain_semaphores.resize(swapchain.get_image_count());
 	for (vkte::SemaphoreHandle& semaphore : swapchain_semaphores) semaphore = engine.add_semaphore();
-	timeline = engine.add_timeline_semaphore();
 	for (uint32_t i = 0; i < vkte::frames_in_flight; ++i)
 	{
 		vkte::Buffer::Settings uniform_buffer_settings;
@@ -45,7 +33,7 @@ WorkContext::WorkContext(vkte::Engine& engine, AppState& app_state)
 		uniform_buffer_settings.element_count = 1;
 		uniform_buffer_settings.usage_flags = vk::BufferUsageFlagBits::eUniformBuffer;
 		uniform_buffer_settings.location = vkte::MemoryLocation::BARFallbackHostVisible;
-		uniform_buffer_settings.queues = QueueFamilyFlags::Graphics | QueueFamilyFlags::Compute;
+		uniform_buffer_settings.queues = QueueFamilyFlags::Graphics;
 		uniform_buffer_handles[i] = engine.get_memory_manager().add_bindless_buffer("uniform_buffer_" + std::to_string(i), uniform_buffer_settings);
 	}
 
@@ -59,7 +47,6 @@ WorkContext::~WorkContext()
 {
 	for (const vkte::BufferHandle& buffer : uniform_buffer_handles) engine.get_memory_manager().destroy(buffer);
 	engine.wait_idle();
-	engine.destroy(timeline);
 	engine.destruct_components();
 }
 
@@ -77,19 +64,47 @@ void WorkContext::draw_frame(AppState& app_state)
 		app_state.frame_time_ema = app_state.frame_time_ema * (1 - update_weight) + app_state.frame_time * update_weight;
 	}
 	else frame_timers[current_frame].restart();
-	update_uniform_buffer(app_state);
-	const PushConstants pc = get_push_constants(app_state);
-	compute(app_state, pc);
+	app_state.total_frames++;
 	try
 	{
-		render(app_state, pc);
+		record_and_present(app_state);
 	}
 	catch (const vk::OutOfDateKHRError&)
 	{
 		app_state.need_resize = true;
 	}
-	app_state.total_frames++;
 	engine.end_frame();
+}
+
+// The simulation and the rendering go into one command buffer: vkte runs the frames one after another anyway, so a
+// separate compute queue wouldn't overlap anything. A frame whose image can't be acquired skips the simulation too.
+void WorkContext::record_and_present(AppState& app_state)
+{
+	vkte::Command& command = engine.get_command();
+	vkte::Swapchain& swapchain = engine.get_swapchain();
+	const uint32_t current_frame = engine.get_current_frame();
+	const vk::Semaphore image_available = engine.get(frame_semaphores[current_frame][S_IMAGE_AVAILABLE]);
+	const vk::ResultValue<uint32_t> image_idx = engine.acquire_next_image(image_available);
+	if (image_idx.result == vk::Result::eSuboptimalKHR) app_state.need_resize = true;
+	else if (image_idx.result != vk::Result::eSuccess) VKTE_THROW("Failed to acquire next image!");
+
+	update_uniform_buffer(app_state);
+	const PushConstants pc = get_push_constants(app_state);
+	vk::CommandBuffer& cb = command.begin(cb_handles[current_frame]);
+	record_simulation(cb, pc);
+	record_rendering(cb, image_idx.value, app_state, pc);
+	cb.end();
+
+	const vk::SemaphoreSubmitInfo wait_info(image_available, 0, vk::PipelineStageFlagBits2::eColorAttachmentOutput);
+	const vk::Semaphore swapchain_semaphore = engine.get(swapchain_semaphores[image_idx.value]);
+	const vk::SemaphoreSubmitInfo signal_info(swapchain_semaphore, 0, vk::PipelineStageFlagBits2::eAllCommands);
+	const vk::CommandBufferSubmitInfo cbsi(cb);
+	command.submit_graphics(vk::SubmitInfo2({}, wait_info, cbsi, signal_info));
+
+	const vk::PresentInfoKHR present_info(1, &swapchain_semaphore, 1, &swapchain.get(), &image_idx.value);
+	const vk::Result result = engine.present(present_info);
+	if (result == vk::Result::eSuboptimalKHR) app_state.need_resize = true;
+	else if (result != vk::Result::eSuccess) VKTE_THROW("Failed to present!");
 }
 
 glm::ivec2 WorkContext::resize(const vkte::PresentSettings& present_settings)
@@ -142,33 +157,26 @@ PushConstants WorkContext::get_push_constants(const AppState& app_state) const
 	return pc;
 }
 
-void WorkContext::compute(AppState& app_state, const PushConstants& pc)
+void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& pc)
 {
-	vkte::Command& command = engine.get_command();
-	const uint32_t current_frame = engine.get_current_frame();
-	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[current_frame]);
-	vk::CommandBuffer& compute_cb = command.begin(compute_cb_handles[current_frame]);
+	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[engine.get_current_frame()]);
 	if (!cleared)
 	{
-		ants.clear(compute_cb, pc);
-		hash_grid.clear(compute_cb, pc);
-		compute_to_compute_barrier(compute_cb);
+		ants.clear(cb, pc);
+		hash_grid.clear(cb, pc);
+		compute_to_compute_barrier(cb);
 		cleared = true;
 	}
-	device_timer.reset(compute_cb, TIMER_ANTS_STEP);
-	device_timer.reset(compute_cb, TIMER_HASH_GRID_STEP);
-	device_timer.start(compute_cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits2::eComputeShader);
-	ants.compute(compute_cb, pc);
-	device_timer.stop(compute_cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits2::eComputeShader);
-	compute_to_compute_barrier(compute_cb);
-	device_timer.start(compute_cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits2::eComputeShader);
-	hash_grid.compute(compute_cb, pc);
-	device_timer.stop(compute_cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits2::eComputeShader);
-	compute_cb.end();
-
-	const vk::SemaphoreSubmitInfo compute_signal_info(engine.get(timeline), Timeline::get_value(Timeline::COMPUTE, app_state.total_frames), vk::PipelineStageFlagBits2::eAllCommands);
-	const vk::CommandBufferSubmitInfo compute_cbsi(compute_cb);
-	command.submit_compute(vk::SubmitInfo2({}, {}, compute_cbsi, compute_signal_info));
+	device_timer.reset(cb, TIMER_ANTS_STEP);
+	device_timer.reset(cb, TIMER_HASH_GRID_STEP);
+	device_timer.start(cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	ants.compute(cb, pc);
+	device_timer.stop(cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	compute_to_compute_barrier(cb);
+	device_timer.start(cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	hash_grid.compute(cb, pc);
+	device_timer.stop(cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	compute_to_graphics_barrier(cb);
 }
 
 // Runs an ImGui frame without windows, so that ImGui still takes the input it queued and no longer claims the mouse or
@@ -220,21 +228,14 @@ void WorkContext::render_ui(vk::CommandBuffer& cb, AppState& app_state)
 	ui.end_frame(cb);
 }
 
-void WorkContext::render(AppState& app_state, const PushConstants& pc)
+void WorkContext::record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, AppState& app_state, const PushConstants& pc)
 {
-	vkte::Command& command = engine.get_command();
 	vkte::Swapchain& swapchain = engine.get_swapchain();
-	const uint32_t current_frame = engine.get_current_frame();
-	vk::ResultValue<uint32_t> image_idx = engine.acquire_next_image(engine.get(frame_semaphores[current_frame][S_IMAGE_AVAILABLE]));
-	if (image_idx.result == vk::Result::eSuboptimalKHR) app_state.need_resize = true;
-	else if (image_idx.result != vk::Result::eSuccess) VKTE_THROW("Failed to acquire next image!");
-
-	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[current_frame]);
-	vk::CommandBuffer& cb = command.begin(graphics_cb_handles[current_frame]);
+	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[engine.get_current_frame()]);
 	device_timer.reset(cb, TIMER_RENDERING_ALL);
 	device_timer.start(cb, TIMER_RENDERING_ALL, vk::PipelineStageFlagBits2::eTopOfPipe);
 
-	const vk::Image color_image = swapchain.get_image(image_idx.value);
+	const vk::Image color_image = swapchain.get_image(image_idx);
 	vkte::perform_image_layout_transition(cb, {
 		.image = color_image,
 		.range = { .aspect = vk::ImageAspectFlagBits::eColor, .base_mip_level = 0, .level_count = 1, .base_array_layer = 0, .layer_count = 1 },
@@ -246,7 +247,7 @@ void WorkContext::render(AppState& app_state, const PushConstants& pc)
 		.dst_access = vk::AccessFlagBits2::eColorAttachmentWrite
 	});
 	vk::RenderingAttachmentInfo color_att;
-	color_att.imageView = swapchain.get_view(image_idx.value);
+	color_att.imageView = swapchain.get_view(image_idx);
 	color_att.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
 	color_att.loadOp = vk::AttachmentLoadOp::eClear;
 	color_att.storeOp = vk::AttachmentStoreOp::eStore;
@@ -296,19 +297,4 @@ void WorkContext::render(AppState& app_state, const PushConstants& pc)
 		.dst_access = vk::AccessFlagBits2::eNone
 	});
 	device_timer.stop(cb, TIMER_RENDERING_ALL, vk::PipelineStageFlagBits2::eBottomOfPipe);
-	cb.end();
-
-	const std::array<vk::SemaphoreSubmitInfo, 2> render_wait_infos{
-		vk::SemaphoreSubmitInfo(engine.get(timeline), Timeline::get_value(Timeline::COMPUTE, app_state.total_frames), vk::PipelineStageFlagBits2::eAllCommands),
-		vk::SemaphoreSubmitInfo(engine.get(frame_semaphores[current_frame][S_IMAGE_AVAILABLE]), 0, vk::PipelineStageFlagBits2::eColorAttachmentOutput)
-	};
-	const vk::Semaphore swapchain_semaphore = engine.get(swapchain_semaphores[image_idx.value]);
-	const vk::SemaphoreSubmitInfo render_signal_info(swapchain_semaphore, 0, vk::PipelineStageFlagBits2::eAllCommands);
-	const vk::CommandBufferSubmitInfo cbsi(cb);
-	command.submit_graphics(vk::SubmitInfo2({}, render_wait_infos, cbsi, render_signal_info));
-
-	const vk::PresentInfoKHR present_info(1, &swapchain_semaphore, 1, &swapchain.get(), &image_idx.value);
-	const vk::Result result = engine.present(present_info);
-	if (result == vk::Result::eSuboptimalKHR) app_state.need_resize = true;
-	else if (result != vk::Result::eSuccess) VKTE_THROW("Failed to present!");
 }

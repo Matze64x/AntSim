@@ -18,7 +18,7 @@ void Ants::declare_resources(vkte::ResourceDeclarations& declarations, vkte::Mem
 	ants_settings.element_count = ants.size();
 	ants_settings.usage_flags = vk::BufferUsageFlagBits::eStorageBuffer;
 	ants_settings.location = vkte::MemoryLocation::DeviceLocal;
-	ants_settings.queues = QueueFamilyFlags::Transfer | QueueFamilyFlags::Compute | QueueFamilyFlags::Graphics;
+	ants_settings.queues = QueueFamilyFlags::Transfer | QueueFamilyFlags::Graphics;
 	ants_buffer = memory_manager.add_bindless_buffer("ants_buffer", ants_settings);
 
 	const Nest nest{.pos = glm::vec2(0.0f, 0.0f), .level = 1, .food_amount = 0};

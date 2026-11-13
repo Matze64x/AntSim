@@ -17,7 +17,7 @@ void HashGrid::declare_resources(vkte::ResourceDeclarations& declarations, vkte:
 	buffer_settings.element_count = cells.size();
 	buffer_settings.usage_flags = vk::BufferUsageFlagBits::eStorageBuffer;
 	buffer_settings.location = vkte::MemoryLocation::DeviceLocal;
-	buffer_settings.queues = QueueFamilyFlags::Transfer | QueueFamilyFlags::Compute | QueueFamilyFlags::Graphics;
+	buffer_settings.queues = QueueFamilyFlags::Transfer | QueueFamilyFlags::Graphics;
 	hash_grid_buffer = memory_manager.add_bindless_buffer("hash_grid_buffer", buffer_settings);
 
 	vkte::Pipeline::ComputeSettings compute_settings;

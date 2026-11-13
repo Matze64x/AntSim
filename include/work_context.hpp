@@ -18,7 +18,7 @@ enum SemaphoreNames
 	SEMAPHORE_COUNT
 };
 
-// orchestrates the simulation's compute work and the rendering of each frame
+// records each frame's simulation and rendering
 class WorkContext
 {
 public:
@@ -36,10 +36,8 @@ private:
 	vkte::UI& ui;
 	std::array<std::array<vkte::SemaphoreHandle, SEMAPHORE_COUNT>, vkte::frames_in_flight> frame_semaphores;
 	std::vector<vkte::SemaphoreHandle> swapchain_semaphores;
-	vkte::TimelineSemaphoreHandle timeline;
 	std::array<vkte::DeviceTimerHandle, vkte::frames_in_flight> device_timer_handles;
-	std::array<vkte::CommandBufferHandle, vkte::frames_in_flight> compute_cb_handles;
-	std::array<vkte::CommandBufferHandle, vkte::frames_in_flight> graphics_cb_handles;
+	std::array<vkte::CommandBufferHandle, vkte::frames_in_flight> cb_handles;
 	std::array<Timer, vkte::frames_in_flight> frame_timers;
 	std::array<vkte::BufferHandle, vkte::frames_in_flight> uniform_buffer_handles;
 	UniformBufferData uniform_buffer_data{};
@@ -48,7 +46,8 @@ private:
 
 	void update_uniform_buffer(AppState& app_state);
 	PushConstants get_push_constants(const AppState& app_state) const;
-	void compute(AppState& app_state, const PushConstants& pc);
-	void render(AppState& app_state, const PushConstants& pc);
+	void record_and_present(AppState& app_state);
+	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc);
+	void record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, AppState& app_state, const PushConstants& pc);
 	void render_ui(vk::CommandBuffer& cb, AppState& app_state);
 };
