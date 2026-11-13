@@ -41,14 +41,12 @@ private:
 	std::array<Timer, vkte::frames_in_flight> frame_timers;
 	std::array<vkte::BufferHandle, vkte::frames_in_flight> uniform_buffer_handles;
 	UniformBufferData uniform_buffer_data{};
-	// the ants and the hash grid are cleared before the first frame's simulation step
-	bool cleared = false;
 
 	void update_uniform_buffer(AppState& app_state);
 	PushConstants get_push_constants(const AppState& app_state) const;
 	void update_frame_times(AppState& app_state);
 	void record_and_present(AppState& app_state);
-	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc);
+	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset);
 	void record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, AppState& app_state, const PushConstants& pc);
 	void render_ui(vk::CommandBuffer& cb, AppState& app_state);
 };

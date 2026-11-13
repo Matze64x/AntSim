@@ -69,6 +69,8 @@ struct AppState
 	bool show_ui = true;
 	bool need_resize = false;
 	bool reload_shaders = false;
+	// fills the buffers with the simulation's start in the next frame, which the first frame does too
+	bool reset_simulation = true;
 	bool shaders_compiled = true;
 	// while panning, the world position that stays under the cursor
 	glm::vec2 pan_anchor = glm::vec2(0.0f, 0.0f);

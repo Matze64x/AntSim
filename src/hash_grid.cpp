@@ -1,6 +1,4 @@
 #include "hash_grid.hpp"
-#include <span>
-#include <vector>
 #include "vkte/buffer.hpp"
 #include "vkte/resource_declarations.hpp"
 
@@ -11,10 +9,10 @@ HashGrid::HashGrid(vkte::Engine& engine, uint32_t capacity) : engine(engine), ca
 
 void HashGrid::declare_resources(vkte::ResourceDeclarations& declarations, vkte::MemoryManager& memory_manager, const vkte::FrameSettings& frame_settings)
 {
-	const std::vector<HashGridCell> cells(capacity);
+	// reset() fills it before the first frame
 	vkte::Buffer::Settings buffer_settings;
-	buffer_settings.initial_data = std::as_bytes(std::span(cells));
-	buffer_settings.element_count = cells.size();
+	buffer_settings.byte_size = sizeof(HashGridCell) * capacity;
+	buffer_settings.element_count = capacity;
 	buffer_settings.usage_flags = vk::BufferUsageFlagBits::eStorageBuffer;
 	buffer_settings.location = vkte::MemoryLocation::DeviceLocal;
 	buffer_settings.queues = QueueFamilyFlags::Transfer | QueueFamilyFlags::Graphics;
@@ -22,8 +20,6 @@ void HashGrid::declare_resources(vkte::ResourceDeclarations& declarations, vkte:
 
 	vkte::Pipeline::ComputeSettings compute_settings;
 	compute_settings.push_constant_byte_size = sizeof(PushConstants);
-	compute_settings.shader = vkte::Shader("hash_grid.slang", vk::ShaderStageFlagBits::eCompute, "clear");
-	clear_pipeline = declarations.add_pipeline(compute_settings);
 	compute_settings.shader = vkte::Shader("hash_grid.slang", vk::ShaderStageFlagBits::eCompute, "step_cells");
 	step_pipeline = declarations.add_pipeline(compute_settings);
 
@@ -51,9 +47,9 @@ void HashGrid::dispatch(vk::CommandBuffer& cb, vkte::PipelineHandle pipeline, co
 	cb.dispatch((capacity + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE, 1, 1);
 }
 
-void HashGrid::clear(vk::CommandBuffer& cb, const PushConstants& pc)
+void HashGrid::reset(vk::CommandBuffer& cb)
 {
-	dispatch(cb, clear_pipeline, pc);
+	cb.fillBuffer(engine.get_memory_manager().get_buffer(hash_grid_buffer).get(), 0, vk::WholeSize, 0);
 }
 
 void HashGrid::compute(vk::CommandBuffer& cb, const PushConstants& pc)

@@ -15,16 +15,6 @@ HashGrid get_hash_grid()
 	return HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity);
 }
 
-[shader("compute")]
-[numthreads(WORKGROUP_SIZE, 1, 1)]
-void clear(uint3 dispatch_thread_id : SV_DispatchThreadID)
-{
-	const HashGrid hash_grid = get_hash_grid();
-	if (!hash_grid.is_valid(dispatch_thread_id.x)) return;
-	const HashGridCell cell = {};
-	hash_grid.cells[dispatch_thread_id.x] = cell;
-}
-
 // adds the food of the push constants, ages the pheromones and frees the cells without food whose pheromones expired
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, 1, 1)]

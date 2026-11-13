@@ -14,7 +14,8 @@ public:
 	const char* name() const override { return "hash_grid"; }
 	void declare_resources(vkte::ResourceDeclarations& declarations, vkte::MemoryManager& memory_manager, const vkte::FrameSettings& frame_settings) override;
 	void destruct(vkte::MemoryManager& memory_manager) override;
-	void clear(vk::CommandBuffer& cb, const PushConstants& pc);
+	// records emptying every cell
+	void reset(vk::CommandBuffer& cb);
 	// adds the food of the push constants, ages the pheromones and frees the cells without food whose pheromones expired
 	void compute(vk::CommandBuffer& cb, const PushConstants& pc);
 	// the hash grid and the nest, covering the screen
@@ -25,7 +26,6 @@ private:
 	vkte::Engine& engine;
 	uint32_t capacity;
 	vkte::BufferHandle hash_grid_buffer;
-	vkte::PipelineHandle clear_pipeline;
 	vkte::PipelineHandle render_pipeline;
 	vkte::PipelineHandle step_pipeline;
 

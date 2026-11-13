@@ -17,16 +17,6 @@ static const float ANT_SEARCH_RADIUS = 0.2;
 // how far ants may go from the origin along each axis
 static const float WORLD_BOUND = 100.0;
 
-[shader("compute")]
-[numthreads(WORKGROUP_SIZE, 1, 1)]
-void clear(uint3 dispatch_thread_id : SV_DispatchThreadID)
-{
-	if (dispatch_thread_id.x >= pc.ant_count) return;
-	vkte::Buffer<Ant> ants = vkte::get_buffer<Ant>(pc.ants);
-	const Ant ant = {};
-	ants[dispatch_thread_id.x] = ant;
-}
-
 // Samples cells around the ant for a better target than the one it has: food if it carries none, else the nest, or the
 // closest pheromone that leads there.
 void look_for_target(inout Ant ant, HashGrid hash_grid, Nest nest, AntTime time, inout Random rng)

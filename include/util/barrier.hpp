@@ -15,3 +15,10 @@ inline void compute_to_graphics_barrier(vk::CommandBuffer& cb)
 	const vk::MemoryBarrier2 barrier(vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite, vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead);
 	cb.pipelineBarrier2(vk::DependencyInfo().setMemoryBarriers(barrier));
 }
+
+// makes what transfer commands (fills, updates) wrote visible to later compute dispatches
+inline void transfer_to_compute_barrier(vk::CommandBuffer& cb)
+{
+	const vk::MemoryBarrier2 barrier(vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
+	cb.pipelineBarrier2(vk::DependencyInfo().setMemoryBarriers(barrier));
+}

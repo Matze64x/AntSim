@@ -1,6 +1,4 @@
 #include "ants.hpp"
-#include <span>
-#include <vector>
 #include "util/barrier.hpp"
 #include "vkte/buffer.hpp"
 #include "vkte/resource_declarations.hpp"
@@ -12,25 +10,22 @@ Ants::Ants(vkte::Engine& engine, uint32_t ant_count) : engine(engine), ant_count
 
 void Ants::declare_resources(vkte::ResourceDeclarations& declarations, vkte::MemoryManager& memory_manager, const vkte::FrameSettings& frame_settings)
 {
-	const std::vector<Ant> ants(ant_count);
+	// reset() fills both before the first frame
 	vkte::Buffer::Settings ants_settings;
-	ants_settings.initial_data = std::as_bytes(std::span(ants));
-	ants_settings.element_count = ants.size();
+	ants_settings.byte_size = sizeof(Ant) * ant_count;
+	ants_settings.element_count = ant_count;
 	ants_settings.usage_flags = vk::BufferUsageFlagBits::eStorageBuffer;
 	ants_settings.location = vkte::MemoryLocation::DeviceLocal;
 	ants_settings.queues = QueueFamilyFlags::Transfer | QueueFamilyFlags::Graphics;
 	ants_buffer = memory_manager.add_bindless_buffer("ants_buffer", ants_settings);
 
-	const Nest nest{.pos = glm::vec2(0.0f, 0.0f), .level = 1, .food_amount = 0};
 	vkte::Buffer::Settings nest_settings = ants_settings;
-	nest_settings.initial_data = std::as_bytes(std::span(&nest, 1));
+	nest_settings.byte_size = sizeof(Nest);
 	nest_settings.element_count = 1;
 	nest_buffer = memory_manager.add_bindless_buffer("nest_buffer", nest_settings);
 
 	vkte::Pipeline::ComputeSettings compute_settings;
 	compute_settings.push_constant_byte_size = sizeof(PushConstants);
-	compute_settings.shader = vkte::Shader("ants.slang", vk::ShaderStageFlagBits::eCompute, "clear");
-	clear_pipeline = declarations.add_pipeline(compute_settings);
 	compute_settings.shader = vkte::Shader("ants.slang", vk::ShaderStageFlagBits::eCompute, "step_ants");
 	step_pipeline = declarations.add_pipeline(compute_settings);
 	compute_settings.shader = vkte::Shader("ants.slang", vk::ShaderStageFlagBits::eCompute, "update_hash_grid");
@@ -62,9 +57,12 @@ void Ants::dispatch(vk::CommandBuffer& cb, vkte::PipelineHandle pipeline, const 
 	cb.dispatch((ant_count + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE, 1, 1);
 }
 
-void Ants::clear(vk::CommandBuffer& cb, const PushConstants& pc)
+void Ants::reset(vk::CommandBuffer& cb)
 {
-	dispatch(cb, clear_pipeline, pc);
+	static constexpr Nest initial_nest{.pos = glm::vec2(0.0f, 0.0f), .level = 1, .food_amount = 0};
+	vkte::MemoryManager& memory_manager = engine.get_memory_manager();
+	cb.fillBuffer(memory_manager.get_buffer(ants_buffer).get(), 0, vk::WholeSize, 0);
+	cb.updateBuffer(memory_manager.get_buffer(nest_buffer).get(), 0, sizeof(initial_nest), &initial_nest);
 }
 
 void Ants::compute(vk::CommandBuffer& cb, const PushConstants& pc)

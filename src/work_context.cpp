@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <span>
 #include <string>
+#include <utility>
 #include "antlog.hpp"
 #include "imgui.h"
 #include "backends/imgui_impl_sdl3.h"
@@ -95,10 +96,13 @@ void WorkContext::record_and_present(AppState& app_state)
 	else if (image_idx.result != vk::Result::eSuccess) VKTE_THROW("Failed to acquire next image!");
 	update_frame_times(app_state);
 
+	// only once the frame is sure to run, so that a skipped frame doesn't lose the reset
+	const bool reset = std::exchange(app_state.reset_simulation, false);
+	if (reset) app_state.total_time = 0.0f;
 	update_uniform_buffer(app_state);
 	const PushConstants pc = get_push_constants(app_state);
 	vk::CommandBuffer& cb = command.begin(cb_handles[current_frame]);
-	record_simulation(cb, pc);
+	record_simulation(cb, pc, reset);
 	record_rendering(cb, image_idx.value, app_state, pc);
 	cb.end();
 
@@ -164,15 +168,14 @@ PushConstants WorkContext::get_push_constants(const AppState& app_state) const
 	return pc;
 }
 
-void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& pc)
+void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset)
 {
 	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[engine.get_current_frame()]);
-	if (!cleared)
+	if (reset)
 	{
-		ants.clear(cb, pc);
-		hash_grid.clear(cb, pc);
-		compute_to_compute_barrier(cb);
-		cleared = true;
+		ants.reset(cb);
+		hash_grid.reset(cb);
+		transfer_to_compute_barrier(cb);
 	}
 	device_timer.reset(cb, TIMER_ANTS_STEP);
 	device_timer.reset(cb, TIMER_HASH_GRID_STEP);
@@ -208,6 +211,8 @@ void WorkContext::render_ui(vk::CommandBuffer& cb, AppState& app_state)
 {
 	ui.new_frame("AntSim");
 	ImGui::PushItemWidth(80.0f);
+	if (ImGui::Button("Reset Simulation")) app_state.reset_simulation = true;
+	ImGui::SameLine();
 	if (ImGui::Button("Reload Shaders")) app_state.reload_shaders = true;
 	if (app_state.shaders_compiled) ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Shaders compiled");
 	else ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Shader compilation failed");
