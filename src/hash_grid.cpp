@@ -27,7 +27,6 @@ void HashGrid::declare_resources(vkte::ResourceDeclarations& declarations, vkte:
 	render_settings.shaders.push_back(vkte::Shader("hash_grid.slang", vk::ShaderStageFlagBits::eVertex, "vertex_main"));
 	render_settings.shaders.push_back(vkte::Shader("hash_grid.slang", vk::ShaderStageFlagBits::eFragment, "fragment_main"));
 	render_settings.color_formats = {frame_settings.color_format};
-	render_settings.depth_format = frame_settings.depth_format;
 	render_settings.polygon_mode = vk::PolygonMode::eFill;
 	render_settings.primitive_topology = vk::PrimitiveTopology::eTriangleList;
 	render_settings.pcrs.push_back(vk::PushConstantRange(render_push_constant_stages, 0, sizeof(PushConstants)));

@@ -29,7 +29,7 @@ Controls: left mouse drag pans (the grabbed point stays under the cursor), the m
 - `WorkContext` (`src/work_context.cpp`) owns the two components and records each frame: after `Engine::begin_frame()` it updates the frame's uniform buffer, records the simulation (preceded by filling the buffers with the simulation's start on the first frame and on **Reset Simulation**) and then, after a barrier, the drawing of the ants, the hash grid and the UI with dynamic rendering into one command buffer on the graphics queue; a separate compute queue wouldn't overlap anything, since vkte runs the frames one after another. (Every `Command::submit_*()` of a frame waits for the previous frame's.)
 - `Ants` and `HashGrid` (`src/ants.cpp`, `src/hash_grid.cpp`) are `vkte::Component`s: `declare_resources()` creates their bindless buffers and declares their pipelines; they record reset (buffer fills), compute and draw.
 - Every pipeline takes the same `PushConstants` (`ant_shaders/shared/push_constants.slang`): the bindless buffer handles, which shaders resolve with `vkte::get_buffer<T>()`, and the ant count and hash grid capacity.
-- Draw order matters: vkte pipelines always test depth with `Less`, so the ants are drawn first and the hash grid's full-screen pass at the same depth fills only the rest.
+- Rendering has no depth attachment, so draw order decides what is on top: the hash grid's full-screen pass first, then the ants.
 
 ## Shader Organization
 

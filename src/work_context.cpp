@@ -40,7 +40,6 @@ WorkContext::WorkContext(vkte::Engine& engine, AppState& app_state)
 
 	vkte::FrameSettings frame_settings;
 	frame_settings.color_format = swapchain.get_color_format();
-	frame_settings.depth_format = swapchain.get_depth_format();
 	engine.construct_components(frame_settings);
 }
 
@@ -256,19 +255,11 @@ void WorkContext::record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, Ap
 	color_att.loadOp = vk::AttachmentLoadOp::eClear;
 	color_att.storeOp = vk::AttachmentStoreOp::eStore;
 	color_att.clearValue.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f});
-	vk::RenderingAttachmentInfo depth_att;
-	depth_att.imageView = swapchain.get_depth_view();
-	depth_att.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
-	depth_att.loadOp = vk::AttachmentLoadOp::eClear;
-	depth_att.storeOp = vk::AttachmentStoreOp::eDontCare;
-	depth_att.clearValue.depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
 	vk::RenderingInfo ri;
 	ri.renderArea = vk::Rect2D(vk::Offset2D(0, 0), swapchain.get_extent());
 	ri.layerCount = 1;
 	ri.colorAttachmentCount = 1;
 	ri.pColorAttachments = &color_att;
-	ri.pDepthAttachment = &depth_att;
-	ri.pStencilAttachment = (vkte::default_aspect_for_format(swapchain.get_depth_format()) & vk::ImageAspectFlagBits::eStencil) ? &depth_att : nullptr;
 	cb.beginRendering(ri);
 
 	vk::Viewport viewport;
@@ -284,9 +275,9 @@ void WorkContext::record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, Ap
 	scissor.extent = swapchain.get_extent();
 	cb.setScissorWithCount(scissor);
 
-	// the ants first, so that the hash grid, at the same depth, fills only what they leave
-	ants.draw(cb, pc);
+	// without a depth attachment, later draws cover earlier ones: the ants go on top of the grid
 	hash_grid.draw(cb, pc);
+	ants.draw(cb, pc);
 	if (app_state.show_ui) render_ui(cb, app_state);
 	else skip_ui();
 	cb.endRendering();
