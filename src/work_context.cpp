@@ -4,14 +4,12 @@
 #include <string>
 #include <utility>
 #include "antlog.hpp"
-#include "imgui.h"
-#include "backends/imgui_impl_sdl3.h"
 #include "util/barrier.hpp"
 #include "vkte/buffer.hpp"
 #include "vkte/image.hpp"
 
 WorkContext::WorkContext(vkte::Engine& engine, AppState& app_state)
-	: engine(engine), simulation(engine, app_state.ant_count, app_state.hash_grid_capacity), ui(engine.get_ui())
+	: engine(engine), simulation(engine, app_state.ant_count, app_state.hash_grid_capacity), ui(engine)
 {
 	engine.register_component(simulation);
 
@@ -155,56 +153,6 @@ void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& 
 	compute_to_graphics_barrier(cb);
 }
 
-// Runs an ImGui frame without windows, so that ImGui still takes the input it queued and no longer claims the mouse or
-// the keyboard, which vkte::EventHandler would otherwise keep ignoring while the UI is hidden.
-static void skip_ui()
-{
-	ImGui_ImplSDL3_NewFrame();
-	ImGui::NewFrame();
-	ImGui::EndFrame();
-}
-
-// the color map to show a quantity with, and the color if it is a custom one
-static void visualization_controls(const char* name, Visualization& visualization)
-{
-	static constexpr std::array<const char*, 6> color_maps{"None", "viridis", "plasma", "magma", "inferno", "custom color"};
-	int color_map = int(visualization.color_map);
-	if (ImGui::Combo(name, &color_map, color_maps.data(), int(color_maps.size()))) visualization.color_map = ColorMap(color_map);
-	if (visualization.color_map == ColorMap::CustomColor) ImGui::ColorEdit3((std::string(name) + " Color").c_str(), &visualization.color.x);
-}
-
-void WorkContext::render_ui(vk::CommandBuffer& cb, AppState& app_state)
-{
-	ui.new_frame("AntSim");
-	ImGui::PushItemWidth(80.0f);
-	if (ImGui::Button("Reset Simulation")) app_state.reset_simulation = true;
-	ImGui::SameLine();
-	if (ImGui::Button("Reload Shaders")) app_state.reload_shaders = true;
-	if (app_state.shaders_compiled) ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Shaders compiled");
-	else ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Shader compilation failed");
-
-	ImGui::PushItemWidth(200.0f);
-	ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "Visualization");
-	visualization_controls("Food", app_state.visualizations.food);
-	visualization_controls("Food Pheromone", app_state.visualizations.food_pheromone);
-	visualization_controls("Nest", app_state.visualizations.nest);
-	visualization_controls("Nest Pheromone", app_state.visualizations.nest_pheromone);
-	ImGui::Text("Ants Colors");
-	ImGui::ColorEdit3("Without Food", &app_state.visualizations.ant_wo_food_color.x);
-	ImGui::ColorEdit3("Without Food Direction Marker", &app_state.visualizations.ant_wo_food_dir_color.x);
-	ImGui::ColorEdit3("With Food", &app_state.visualizations.ant_w_food_color.x);
-	ImGui::ColorEdit3("With Food Direction Marker", &app_state.visualizations.ant_w_food_dir_color.x);
-	ImGui::PopItemWidth();
-	ImGui::Separator();
-
-	ImGui::Text("%.4f ms; FPS: %.2f", app_state.frame_time_ema * 1000, 1.0 / app_state.frame_time_ema);
-	ImGui::Text("total time: %.4f s", app_state.total_time);
-	ImGui::Text("simulation: %.4f ms", app_state.device_timings[TIMER_SIMULATION]);
-	ImGui::Text("rendering: %.4f ms", app_state.device_timings[TIMER_RENDERING]);
-	ImGui::PopItemWidth();
-	ui.end_frame(cb);
-}
-
 void WorkContext::record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, AppState& app_state, const PushConstants& pc)
 {
 	vkte::Swapchain& swapchain = engine.get_swapchain();
@@ -250,8 +198,7 @@ void WorkContext::record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, Ap
 	cb.setScissorWithCount(scissor);
 
 	simulation.draw(cb, pc);
-	if (app_state.show_ui) render_ui(cb, app_state);
-	else skip_ui();
+	ui.record(cb, app_state);
 	cb.endRendering();
 	vkte::perform_image_layout_transition(cb, {
 		.image = color_image,

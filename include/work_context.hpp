@@ -6,6 +6,7 @@
 #include "app_state.hpp"
 #include "shared/push_constants.slang"
 #include "simulation.hpp"
+#include "ui.hpp"
 #include "shared/uniform_buffer.slang"
 #include "util/timer.hpp"
 #include "glm/vec2.hpp"
@@ -31,7 +32,7 @@ public:
 private:
 	vkte::Engine& engine;
 	Simulation simulation;
-	vkte::UI& ui;
+	UI ui;
 	std::array<std::array<vkte::SemaphoreHandle, SEMAPHORE_COUNT>, vkte::frames_in_flight> frame_semaphores;
 	std::vector<vkte::SemaphoreHandle> swapchain_semaphores;
 	std::array<vkte::DeviceTimerHandle, vkte::frames_in_flight> device_timer_handles;
@@ -45,5 +46,4 @@ private:
 	void record_and_present(AppState& app_state);
 	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset);
 	void record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, AppState& app_state, const PushConstants& pc);
-	void render_ui(vk::CommandBuffer& cb, AppState& app_state);
 };

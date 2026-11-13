@@ -25,6 +25,7 @@ add_subdirectory(${VKTE_DIR})
 set(SOURCE_FILES
 	src/application.cpp
 	src/simulation.cpp
+	src/ui.cpp
 	src/work_context.cpp
 )
 
