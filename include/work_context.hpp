@@ -1,76 +1,54 @@
 #pragma once
 
+#include <array>
 #include <vector>
 
 #include "ants.hpp"
 #include "app_state.hpp"
 #include "hash_grid.hpp"
+#include "shared/push_constants.slang"
+#include "shared/uniform_buffer.slang"
 #include "util/timer.hpp"
-#include "vkte_window/ui.hpp"
-#include "vkte/device_timer.hpp"
-#include "vkte/storage.hpp"
-#include "vkte/swapchain.hpp"
-#include "vkte/vulkan_command_context.hpp"
-#include "vkte/vulkan_main_context.hpp"
-#include "vkte/synchronization.hpp"
+#include "glm/vec2.hpp"
+#include "vkte/engine.hpp"
 
 enum SemaphoreNames
 {
 	S_IMAGE_AVAILABLE = 0,
-	S_ANTS_STEP_FINISHED = 1,
-	S_FRAME_TO_FRAME = 2,
 	SEMAPHORE_COUNT
 };
 
-enum FenceNames
-{
-	F_RENDER_FINISHED = 0,
-	FENCE_COUNT
-};
-
-// manages the orchestration of rendering and computing
+// orchestrates the simulation's compute work and the rendering of each frame
 class WorkContext
 {
 public:
-	WorkContext(const vkte::VulkanMainContext& vmc, vkte::VulkanCommandContext& vcc);
-	void construct(AppState& app_state);
-	void destruct();
+	WorkContext(vkte::Engine& engine, AppState& app_state);
+	~WorkContext();
 	void draw_frame(AppState& app_state);
-	vk::Extent2D resize(bool vsync);
+	glm::ivec2 resize(const vkte::PresentSettings& present_settings);
+	// recompiles every shader; returns false, keeping the old ones, if any failed to compile
+	bool reload_shaders();
 
 private:
-	static constexpr uint32_t frames_in_flight = 2;
-
-	struct UniformBufferData
-	{
-		glm::vec2 range_min;
-		glm::vec2 range_max;
-		uint32_t food_vis_code;
-		uint32_t food_pheromone_vis_code;
-		uint32_t nest_vis_code;
-		uint32_t nest_pheromone_vis_code;
-		uint32_t ant_wo_food_vis_code;
-		uint32_t ant_wo_food_dir_vis_code;
-		uint32_t ant_w_food_vis_code;
-		uint32_t ant_w_food_dir_vis_code;
-		uint32_t frame_idx;
-		float frame_time;
-		float total_time;
-	} uniform_buffer_data;
-
-	const vkte::VulkanMainContext& vmc;
-	vkte::VulkanCommandContext& vcc;
-	vkte::Storage storage;
-	vkte::Swapchain swapchain;
+	vkte::Engine& engine;
 	Ants ants;
 	HashGrid hash_grid;
-	vkte::UI ui;
-	std::vector<vkte::Synchronization> syncs;
-	vkte::Synchronization swapchain_sync;
-	std::vector<vkte::DeviceTimer> device_timers;
-	std::array<Timer<>, frames_in_flight> timers;
-	std::array<uint32_t, frames_in_flight> uniform_buffers;
+	vkte::UI& ui;
+	std::array<std::array<vkte::SemaphoreHandle, SEMAPHORE_COUNT>, vkte::frames_in_flight> frame_semaphores;
+	std::vector<vkte::SemaphoreHandle> swapchain_semaphores;
+	vkte::TimelineSemaphoreHandle timeline;
+	std::array<vkte::DeviceTimerHandle, vkte::frames_in_flight> device_timer_handles;
+	std::array<vkte::CommandBufferHandle, vkte::frames_in_flight> compute_cb_handles;
+	std::array<vkte::CommandBufferHandle, vkte::frames_in_flight> graphics_cb_handles;
+	std::array<Timer, vkte::frames_in_flight> frame_timers;
+	std::array<vkte::BufferHandle, vkte::frames_in_flight> uniform_buffer_handles;
+	UniformBufferData uniform_buffer_data{};
+	// the ants and the hash grid are cleared before the first frame's simulation step
+	bool cleared = false;
 
+	void update_uniform_buffer(AppState& app_state);
+	PushConstants get_push_constants(const AppState& app_state) const;
+	void compute(AppState& app_state, const PushConstants& pc);
+	void render(AppState& app_state, const PushConstants& pc);
 	void render_ui(vk::CommandBuffer& cb, AppState& app_state);
-	void render(uint32_t image_idx, AppState& app_state);
 };

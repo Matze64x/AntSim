@@ -1,247 +1,314 @@
 #include "work_context.hpp"
-#include <vulkan/vulkan_enums.hpp>
-#include <vulkan/vulkan_structs.hpp>
+#include <algorithm>
+#include <span>
+#include <string>
 #include "antlog.hpp"
 #include "imgui.h"
-#include "util/color.hpp"
+#include "backends/imgui_impl_sdl3.h"
+#include "util/barrier.hpp"
+#include "vkte/buffer.hpp"
+#include "vkte/image.hpp"
 
-WorkContext::WorkContext(const vkte::VulkanMainContext& vmc, vkte::VulkanCommandContext& vcc)
-	: vmc(vmc), vcc(vcc), storage(vmc, vcc), swapchain(vmc, vcc, storage), ants(vmc, storage), hash_grid(vmc, storage), ui(vmc), swapchain_sync(vmc.logical_device.get())
-{}
-
-void WorkContext::construct(AppState& app_state)
+namespace Timeline
 {
-	antlog::debug("Storage info\n{}", storage.get_memory_info());
-	vcc.add_graphics_buffers(frames_in_flight);
-	vcc.add_compute_buffers(2);
-	vcc.add_transfer_buffers(1);
-	swapchain.construct(app_state.vsync);
-	app_state.get_window_extent() = swapchain.get_extent();
-	for (uint32_t i = 0; i < frames_in_flight; ++i)
+enum TimelineStep
+{
+	COMPUTE = 0,
+	STEPS_PER_FRAME = 1
+};
+static uint64_t get_value(TimelineStep step, uint64_t frame) { return frame * STEPS_PER_FRAME + step + 1; }
+} // namespace Timeline
+
+WorkContext::WorkContext(vkte::Engine& engine, AppState& app_state)
+	: engine(engine), ants(engine, app_state.ant_count), hash_grid(engine, app_state.hash_grid_capacity), ui(engine.get_ui())
+{
+	engine.register_component(ants);
+	engine.register_component(hash_grid);
+
+	vkte::Command& command = engine.get_command();
+	vkte::Swapchain& swapchain = engine.get_swapchain();
+	app_state.window_extent = glm::ivec2(swapchain.get_extent().width, swapchain.get_extent().height);
+	for (uint32_t i = 0; i < vkte::frames_in_flight; ++i)
 	{
-		syncs.emplace_back(vmc.logical_device.get());
-		device_timers.emplace_back(vmc);
-		device_timers.back().construct(TIMER_COUNT);
+		for (uint32_t s = 0; s < SEMAPHORE_COUNT; s++) frame_semaphores[i][s] = engine.add_semaphore();
+		device_timer_handles[i] = engine.add_device_timer(TIMER_COUNT);
+		compute_cb_handles[i] = command.add_command_buffer(QueueFamilyFlags::Compute);
+		graphics_cb_handles[i] = command.add_command_buffer(QueueFamilyFlags::Graphics);
 	}
-	for (vkte::Synchronization& sync : syncs) sync.construct(SEMAPHORE_COUNT, FENCE_COUNT);
-	swapchain_sync.construct(swapchain.get_framebuffer_count(), 0);
-	for (uint32_t i = 0; i < frames_in_flight; ++i)
+	swapchain_semaphores.resize(swapchain.get_image_count());
+	for (vkte::SemaphoreHandle& semaphore : swapchain_semaphores) semaphore = engine.add_semaphore();
+	timeline = engine.add_timeline_semaphore();
+	for (uint32_t i = 0; i < vkte::frames_in_flight; ++i)
 	{
-		uniform_buffers[i] = storage.add_buffer("uniform_buffer_" + std::to_string(i), &uniform_buffer_data, 1, vk::BufferUsageFlagBits::eUniformBuffer, false, QueueFamilyFlags::Graphics | QueueFamilyFlags::Compute);
+		vkte::Buffer::Settings uniform_buffer_settings;
+		uniform_buffer_settings.initial_data = std::as_bytes(std::span(&uniform_buffer_data, 1));
+		uniform_buffer_settings.element_count = 1;
+		uniform_buffer_settings.usage_flags = vk::BufferUsageFlagBits::eUniformBuffer;
+		uniform_buffer_settings.location = vkte::MemoryLocation::BARFallbackHostVisible;
+		uniform_buffer_settings.queues = QueueFamilyFlags::Graphics | QueueFamilyFlags::Compute;
+		uniform_buffer_handles[i] = engine.get_memory_manager().add_bindless_buffer("uniform_buffer_" + std::to_string(i), uniform_buffer_settings);
 	}
-	ants.setup_storage(app_state);
-	hash_grid.setup_storage(app_state);
-	ants.construct(swapchain.get_render_pass(), app_state, frames_in_flight);
-	hash_grid.construct(swapchain.get_render_pass(), app_state, frames_in_flight);
-	ui.construct(vcc, swapchain.get_render_pass(), frames_in_flight);
-	vk::CommandBuffer& cb = vcc.get_one_time_compute_buffer();
-	ants.clear(cb, app_state);
-	hash_grid.clear(cb, app_state);
-	vcc.submit_compute(cb, true);
+
+	vkte::FrameSettings frame_settings;
+	frame_settings.color_format = swapchain.get_color_format();
+	frame_settings.depth_format = swapchain.get_depth_format();
+	engine.construct_components(frame_settings);
 }
 
-void WorkContext::destruct()
+WorkContext::~WorkContext()
 {
-	vmc.logical_device.get().waitIdle();
-	for (uint32_t i : uniform_buffers) storage.destroy_buffer(i);
-	for (vkte::Synchronization& sync : syncs) sync.destruct();
-	swapchain_sync.destruct();
-	for (auto& device_timer : device_timers) device_timer.destruct();
-	syncs.clear();
-	swapchain.destruct();
-	ants.destruct();
-	hash_grid.destruct();
-	ui.destruct();
+	for (const vkte::BufferHandle& buffer : uniform_buffer_handles) engine.get_memory_manager().destroy(buffer);
+	engine.wait_idle();
+	engine.destroy(timeline);
+	engine.destruct_components();
 }
 
 void WorkContext::draw_frame(AppState& app_state)
 {
-	syncs[app_state.current_frame].wait_for_fence(F_RENDER_FINISHED);
-	syncs[app_state.current_frame].reset_fence(F_RENDER_FINISHED);
-	if (app_state.total_frames > frames_in_flight)
+	engine.begin_frame();
+	const uint32_t current_frame = engine.get_current_frame();
+	if (app_state.total_frames > vkte::frames_in_flight)
 	{
-		for (int i = 0; i < TIMER_COUNT; i++) app_state.device_timings[i] = device_timers[app_state.current_frame].get_result_by_idx(i);
-		app_state.frame_time = std::min(timers[app_state.current_frame].restart() / float(frames_in_flight), 0.1f);
-		app_state.total_time += app_state.frame_time;
+		for (int i = 0; i < TIMER_COUNT; i++) app_state.device_timings[i] = engine.get(device_timer_handles[current_frame]).get_result(i);
+		app_state.frame_time = frame_timers[current_frame].restart() / float(vkte::frames_in_flight);
+		app_state.capped_frame_time = std::min(app_state.frame_time, 0.1f);
+		app_state.total_time += app_state.capped_frame_time;
+		const float update_weight = std::clamp(10.0f * app_state.capped_frame_time, 0.0001f, 1.0f);
+		app_state.frame_time_ema = app_state.frame_time_ema * (1 - update_weight) + app_state.frame_time * update_weight;
 	}
-	else timers[app_state.current_frame].restart();
-	uniform_buffer_data.range_min = app_state.visible_range_min;
-	uniform_buffer_data.range_max = app_state.visible_range_max;
-	uniform_buffer_data.food_vis_code = get_hex_color(app_state.vis_code_data.food_color) | app_state.vis_code_data.food;
-	uniform_buffer_data.food_pheromone_vis_code = get_hex_color(app_state.vis_code_data.food_pheromone_color) | app_state.vis_code_data.food_pheromone;
-	uniform_buffer_data.nest_vis_code = get_hex_color(app_state.vis_code_data.nest_color) | app_state.vis_code_data.nest;
-	uniform_buffer_data.nest_pheromone_vis_code = get_hex_color(app_state.vis_code_data.nest_pheromone_color) | app_state.vis_code_data.nest_pheromone;
-	uniform_buffer_data.ant_wo_food_vis_code = get_hex_color(app_state.vis_code_data.ant_wo_food_color);
-	uniform_buffer_data.ant_wo_food_dir_vis_code = get_hex_color(app_state.vis_code_data.ant_wo_food_dir_color);
-	uniform_buffer_data.ant_w_food_vis_code = get_hex_color(app_state.vis_code_data.ant_w_food_color);
-	uniform_buffer_data.ant_w_food_dir_vis_code = get_hex_color(app_state.vis_code_data.ant_w_food_dir_color);
-	uniform_buffer_data.frame_idx = app_state.total_time;
-	uniform_buffer_data.frame_time = app_state.frame_time;
-	uniform_buffer_data.total_time = app_state.total_time;
-	storage.get_buffer(uniform_buffers[app_state.current_frame]).update_data(uniform_buffer_data);
-	vk::ResultValue<uint32_t> image_idx = vmc.logical_device.get().acquireNextImageKHR(swapchain.get(), uint64_t(-1), syncs[app_state.current_frame].get_semaphore(S_IMAGE_AVAILABLE));
-	VKTE_CHECK(image_idx.result, "Failed to acquire next image!");
-	render(image_idx.value, app_state);
-	app_state.current_frame = (app_state.current_frame + 1) % frames_in_flight;
+	else frame_timers[current_frame].restart();
+	update_uniform_buffer(app_state);
+	const PushConstants pc = get_push_constants(app_state);
+	compute(app_state, pc);
+	try
+	{
+		render(app_state, pc);
+	}
+	catch (const vk::OutOfDateKHRError&)
+	{
+		app_state.need_resize = true;
+	}
 	app_state.total_frames++;
+	engine.end_frame();
 }
 
-vk::Extent2D WorkContext::resize(bool vsync)
+glm::ivec2 WorkContext::resize(const vkte::PresentSettings& present_settings)
 {
-	vmc.logical_device.get().waitIdle();
-	swapchain.recreate(vsync);
-	for (vkte::Synchronization& sync : syncs) sync.destruct();
-	for (vkte::Synchronization& sync : syncs) sync.construct(SEMAPHORE_COUNT, FENCE_COUNT);
-	swapchain_sync.destruct();
-	swapchain_sync.construct(swapchain.get_framebuffer_count(), 0);
-	return swapchain.get_extent();
+	engine.wait_idle();
+	engine.resize(present_settings);
+	for (const vkte::SemaphoreHandle& semaphore : swapchain_semaphores) engine.destroy(semaphore);
+	swapchain_semaphores.resize(engine.get_swapchain().get_image_count());
+	for (vkte::SemaphoreHandle& semaphore : swapchain_semaphores) semaphore = engine.add_semaphore();
+	const vk::Extent2D swapchain_extent = engine.get_swapchain().get_extent();
+	return glm::ivec2(swapchain_extent.width, swapchain_extent.height);
+}
+
+bool WorkContext::reload_shaders()
+{
+	engine.wait_idle();
+	return engine.reload_shaders_all();
+}
+
+void WorkContext::update_uniform_buffer(AppState& app_state)
+{
+	uniform_buffer_data.range_min = app_state.visible_range_min;
+	uniform_buffer_data.range_max = app_state.visible_range_max;
+	const Visualizations& visualizations = app_state.visualizations;
+	uniform_buffer_data.food = visualizations.food;
+	uniform_buffer_data.food_pheromone = visualizations.food_pheromone;
+	uniform_buffer_data.nest = visualizations.nest;
+	uniform_buffer_data.nest_pheromone = visualizations.nest_pheromone;
+	uniform_buffer_data.ant_wo_food_color = visualizations.ant_wo_food_color;
+	uniform_buffer_data.ant_wo_food_dir_color = visualizations.ant_wo_food_dir_color;
+	uniform_buffer_data.ant_w_food_color = visualizations.ant_w_food_color;
+	uniform_buffer_data.ant_w_food_dir_color = visualizations.ant_w_food_dir_color;
+	uniform_buffer_data.frame_idx = app_state.total_frames;
+	uniform_buffer_data.frame_time = app_state.capped_frame_time;
+	uniform_buffer_data.total_time = app_state.total_time;
+	engine.get_memory_manager().get_buffer(uniform_buffer_handles[engine.get_current_frame()]).update_data(uniform_buffer_data);
+}
+
+PushConstants WorkContext::get_push_constants(const AppState& app_state) const
+{
+	PushConstants pc{};
+	pc.ants = ants.get_ants_buffer();
+	pc.nest = ants.get_nest_buffer();
+	pc.hash_grid = hash_grid.get_buffer();
+	pc.uniform_buffer = uniform_buffer_handles[engine.get_current_frame()];
+	pc.ant_count = app_state.ant_count;
+	pc.hash_grid_capacity = app_state.hash_grid_capacity;
+	pc.food_pos = app_state.add_food_pos;
+	pc.food_amount = app_state.add_food_amount;
+	return pc;
+}
+
+void WorkContext::compute(AppState& app_state, const PushConstants& pc)
+{
+	vkte::Command& command = engine.get_command();
+	const uint32_t current_frame = engine.get_current_frame();
+	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[current_frame]);
+	vk::CommandBuffer& compute_cb = command.begin(compute_cb_handles[current_frame]);
+	if (!cleared)
+	{
+		ants.clear(compute_cb, pc);
+		hash_grid.clear(compute_cb, pc);
+		compute_to_compute_barrier(compute_cb);
+		cleared = true;
+	}
+	device_timer.reset(compute_cb, TIMER_ANTS_STEP);
+	device_timer.reset(compute_cb, TIMER_HASH_GRID_STEP);
+	device_timer.start(compute_cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	ants.compute(compute_cb, pc);
+	device_timer.stop(compute_cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	compute_to_compute_barrier(compute_cb);
+	device_timer.start(compute_cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	hash_grid.compute(compute_cb, pc);
+	device_timer.stop(compute_cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	compute_cb.end();
+
+	const vk::SemaphoreSubmitInfo compute_signal_info(engine.get(timeline), Timeline::get_value(Timeline::COMPUTE, app_state.total_frames), vk::PipelineStageFlagBits2::eAllCommands);
+	const vk::CommandBufferSubmitInfo compute_cbsi(compute_cb);
+	command.submit_compute(vk::SubmitInfo2({}, {}, compute_cbsi, compute_signal_info));
+}
+
+// Runs an ImGui frame without windows, so that ImGui still takes the input it queued and no longer claims the mouse or
+// the keyboard, which vkte::EventHandler would otherwise keep ignoring while the UI is hidden.
+static void skip_ui()
+{
+	ImGui_ImplSDL3_NewFrame();
+	ImGui::NewFrame();
+	ImGui::EndFrame();
+}
+
+// the color map to show a quantity with, and the color if it is a custom one
+static void visualization_controls(const char* name, Visualization& visualization)
+{
+	static constexpr std::array<const char*, 6> color_maps{"None", "viridis", "plasma", "magma", "inferno", "custom color"};
+	int color_map = int(visualization.color_map);
+	if (ImGui::Combo(name, &color_map, color_maps.data(), int(color_maps.size()))) visualization.color_map = ColorMap(color_map);
+	if (visualization.color_map == ColorMap::CustomColor) ImGui::ColorEdit3((std::string(name) + " Color").c_str(), &visualization.color.x);
 }
 
 void WorkContext::render_ui(vk::CommandBuffer& cb, AppState& app_state)
 {
 	ui.new_frame("AntSim");
 	ImGui::PushItemWidth(80.0f);
-	if (ImGui::Button("Print Debug Data"))
-	{
-		vmc.logical_device.get().waitIdle();
-		std::vector<HashGridCellData> hash_grid;
-		storage.get_buffer_by_name("hash_grid_buffer").obtain_all_data<HashGridCellData>(hash_grid);
-		std::vector<AntData> ants;
-		storage.get_buffer_by_name("ants_buffer").obtain_all_data<AntData>(ants);
-		NestData nest = storage.get_buffer_by_name("nest_buffer").obtain_first_element<NestData>();
-
-		uint32_t occupied_grid_cells = 0;
-		for (const HashGridCellData& cell : hash_grid)
-		{
-			if ((cell.state_bits & (1u << 1)) != 0) occupied_grid_cells++;
-		}
-		uint32_t carrying_ants = 0;
-		for (const AntData& ant : ants)
-		{
-			if ((ant.state_bits & (1u << 3)) != 0) carrying_ants++;
-		}
-		antlog::debug("Debug Data:\nNest\n  food: {}\nHash Grid\n  total:{}\n  occupied:{}\n  percentage:{:4f}\nAnts\n  total:{}\n  carrying:{}\n  percentage:{:4f}", nest.food_amount, hash_grid.size(), occupied_grid_cells, (float(occupied_grid_cells) / float(hash_grid.size())) * 100.0f, ants.size(), carrying_ants, (float(carrying_ants) / float(ants.size())) * 100.0f);
-	}
+	if (ImGui::Button("Reload Shaders")) app_state.reload_shaders = true;
+	if (app_state.shaders_compiled) ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Shaders compiled");
+	else ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Shader compilation failed");
 
 	ImGui::PushItemWidth(200.0f);
 	ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "Visualization");
-	const char* items[] = { "None", "viridis", "plasma", "magma", "inferno", "custom color" };
-	int combo_item = app_state.vis_code_data.food;
-	if (ImGui::Combo("Food", &combo_item, items, IM_ARRAYSIZE(items))) app_state.vis_code_data.food = combo_item;
-	app_state.vis_code_data.food = std::clamp(app_state.vis_code_data.food, 0u, 5u);
-	if (app_state.vis_code_data.food == 5) ImGui::ColorEdit3("Food Color", (float*)(&app_state.vis_code_data.food_color));
-	combo_item = app_state.vis_code_data.food_pheromone;
-	if (ImGui::Combo("Food Pheromone", &combo_item, items, IM_ARRAYSIZE(items))) app_state.vis_code_data.food_pheromone = combo_item;
-	app_state.vis_code_data.food_pheromone = std::clamp(app_state.vis_code_data.food_pheromone, 0u, 5u);
-	if (app_state.vis_code_data.food_pheromone == 5) ImGui::ColorEdit3("Food Pheromone Color", (float*)(&app_state.vis_code_data.food_pheromone_color));
-	combo_item = app_state.vis_code_data.nest;
-	if (ImGui::Combo("Nest", &combo_item, items, IM_ARRAYSIZE(items))) app_state.vis_code_data.nest = combo_item;
-	app_state.vis_code_data.nest = std::clamp(app_state.vis_code_data.nest, 0u, 5u);
-	if (app_state.vis_code_data.nest == 5) ImGui::ColorEdit3("Nest Color", (float*)(&app_state.vis_code_data.nest_color));
-	combo_item = app_state.vis_code_data.nest_pheromone;
-	if (ImGui::Combo("Nest Pheromone", &combo_item, items, IM_ARRAYSIZE(items))) app_state.vis_code_data.nest_pheromone = combo_item;
-	app_state.vis_code_data.nest_pheromone = std::clamp(app_state.vis_code_data.nest_pheromone, 0u, 5u);
-	if (app_state.vis_code_data.nest_pheromone == 5) ImGui::ColorEdit3("Nest Pheromone Color", (float*)(&app_state.vis_code_data.nest_pheromone_color));
+	visualization_controls("Food", app_state.visualizations.food);
+	visualization_controls("Food Pheromone", app_state.visualizations.food_pheromone);
+	visualization_controls("Nest", app_state.visualizations.nest);
+	visualization_controls("Nest Pheromone", app_state.visualizations.nest_pheromone);
 	ImGui::Text("Ants Colors");
-	ImGui::ColorEdit3("Without Food", (float*)(&app_state.vis_code_data.ant_wo_food_color));
-	ImGui::ColorEdit3("Without Food Direction Marker", (float*)(&app_state.vis_code_data.ant_wo_food_dir_color));
-	ImGui::ColorEdit3("With Food", (float*)(&app_state.vis_code_data.ant_w_food_color));
-	ImGui::ColorEdit3("With Food Direction Marker", (float*)(&app_state.vis_code_data.ant_w_food_dir_color));
+	ImGui::ColorEdit3("Without Food", &app_state.visualizations.ant_wo_food_color.x);
+	ImGui::ColorEdit3("Without Food Direction Marker", &app_state.visualizations.ant_wo_food_dir_color.x);
+	ImGui::ColorEdit3("With Food", &app_state.visualizations.ant_w_food_color.x);
+	ImGui::ColorEdit3("With Food Direction Marker", &app_state.visualizations.ant_w_food_dir_color.x);
 	ImGui::PopItemWidth();
 	ImGui::Separator();
 
-	constexpr float update_weight = 0.1f;
-	app_state.frame_time_ema = app_state.frame_time_ema * (1 - update_weight) + app_state.frame_time * update_weight;
 	ImGui::Text("%.4f ms; FPS: %.2f", app_state.frame_time_ema * 1000, 1.0 / app_state.frame_time_ema);
 	ImGui::Text("total time: %.4f s", app_state.total_time);
 	ImGui::Text("RENDERING_ALL: %.4f ms", app_state.device_timings[TIMER_RENDERING_ALL]);
 	ImGui::Text("ANTS_STEP: %.4f ms", app_state.device_timings[TIMER_ANTS_STEP]);
 	ImGui::Text("HASH_GRID_STEP: %.4f ms", app_state.device_timings[TIMER_HASH_GRID_STEP]);
+	ImGui::PopItemWidth();
 	ui.end_frame(cb);
 }
 
-void WorkContext::render(uint32_t image_idx, AppState& app_state)
+void WorkContext::render(AppState& app_state, const PushConstants& pc)
 {
-	vk::CommandBuffer& compute_cb = vcc.begin(vcc.compute_cbs[app_state.current_frame]);
-	device_timers[app_state.current_frame].reset(compute_cb, TIMER_ANTS_STEP);
-	device_timers[app_state.current_frame].reset(compute_cb, TIMER_HASH_GRID_STEP);
-	device_timers[app_state.current_frame].start(compute_cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits::eComputeShader);
-	ants.compute(compute_cb, app_state);
-	device_timers[app_state.current_frame].stop(compute_cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits::eComputeShader);
-	const vkte::Buffer& buffer = storage.get_buffer_by_name("hash_grid_buffer");
-	vk::BufferMemoryBarrier barrier(vk::AccessFlagBits::eMemoryWrite, vk::AccessFlagBits::eMemoryRead, vmc.queue_families.get(QueueFamilyFlags::Compute), vmc.queue_families.get(QueueFamilyFlags::Compute), buffer.get(), 0, buffer.get_byte_size());
-	compute_cb.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader, vk::PipelineStageFlagBits::eComputeShader, vk::DependencyFlagBits::eDeviceGroup, {}, {barrier}, {});
-	device_timers[app_state.current_frame].start(compute_cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits::eComputeShader);
-	hash_grid.compute(compute_cb, app_state);
-	device_timers[app_state.current_frame].stop(compute_cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits::eComputeShader);
-	compute_cb.end();
-	std::vector<vk::Semaphore> compute_wait_semaphores;
-	std::vector<vk::PipelineStageFlags> compute_wait_stages;
-	if (app_state.total_frames > 0)
-	{
-		compute_wait_semaphores.push_back(syncs[1 - app_state.current_frame].get_semaphore(S_FRAME_TO_FRAME));
-		compute_wait_stages.push_back(vk::PipelineStageFlagBits::eComputeShader);
-	}
-	std::vector<vk::Semaphore> compute_signal_semaphores;
-	compute_signal_semaphores.push_back(syncs[app_state.current_frame].get_semaphore(S_ANTS_STEP_FINISHED));
-	vk::SubmitInfo compute_si(compute_wait_semaphores.size(), compute_wait_semaphores.data(), compute_wait_stages.data(), 1, &compute_cb, compute_signal_semaphores.size(), compute_signal_semaphores.data());
-	vmc.get_compute_queue().submit(compute_si);
+	vkte::Command& command = engine.get_command();
+	vkte::Swapchain& swapchain = engine.get_swapchain();
+	const uint32_t current_frame = engine.get_current_frame();
+	vk::ResultValue<uint32_t> image_idx = engine.acquire_next_image(engine.get(frame_semaphores[current_frame][S_IMAGE_AVAILABLE]));
+	if (image_idx.result == vk::Result::eSuboptimalKHR) app_state.need_resize = true;
+	else if (image_idx.result != vk::Result::eSuccess) VKTE_THROW("Failed to acquire next image!");
 
-	vk::CommandBuffer& cb = vcc.begin(vcc.graphics_cbs[app_state.current_frame]);
-	device_timers[app_state.current_frame].reset(cb, TIMER_RENDERING_ALL);
-	device_timers[app_state.current_frame].start(cb, TIMER_RENDERING_ALL, vk::PipelineStageFlagBits::eTopOfPipe);
-	vk::RenderPassBeginInfo rpbi{};
-	rpbi.sType = vk::StructureType::eRenderPassBeginInfo;
-	rpbi.renderPass = swapchain.get_render_pass().get();
-	rpbi.framebuffer = swapchain.get_framebuffer(image_idx);
-	rpbi.renderArea.offset = vk::Offset2D(0, 0);
-	rpbi.renderArea.extent = swapchain.get_extent();
-	std::vector<vk::ClearValue> clear_values(2);
-	clear_values[0].color = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-	clear_values[1].depthStencil.depth = 1.0f;
-	clear_values[1].depthStencil.stencil = 0;
-	rpbi.clearValueCount = clear_values.size();
-	rpbi.pClearValues = clear_values.data();
-	cb.beginRenderPass(rpbi, vk::SubpassContents::eInline);
+	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[current_frame]);
+	vk::CommandBuffer& cb = command.begin(graphics_cb_handles[current_frame]);
+	device_timer.reset(cb, TIMER_RENDERING_ALL);
+	device_timer.start(cb, TIMER_RENDERING_ALL, vk::PipelineStageFlagBits2::eTopOfPipe);
 
-	vk::Viewport viewport{};
+	const vk::Image color_image = swapchain.get_image(image_idx.value);
+	vkte::perform_image_layout_transition(cb, {
+		.image = color_image,
+		.range = { .aspect = vk::ImageAspectFlagBits::eColor, .base_mip_level = 0, .level_count = 1, .base_array_layer = 0, .layer_count = 1 },
+		.old_layout = vk::ImageLayout::eUndefined,
+		.new_layout = vk::ImageLayout::eColorAttachmentOptimal,
+		.src_stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+		.src_access = vk::AccessFlagBits2::eNone,
+		.dst_stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+		.dst_access = vk::AccessFlagBits2::eColorAttachmentWrite
+	});
+	vk::RenderingAttachmentInfo color_att;
+	color_att.imageView = swapchain.get_view(image_idx.value);
+	color_att.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+	color_att.loadOp = vk::AttachmentLoadOp::eClear;
+	color_att.storeOp = vk::AttachmentStoreOp::eStore;
+	color_att.clearValue.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f});
+	vk::RenderingAttachmentInfo depth_att;
+	depth_att.imageView = swapchain.get_depth_view();
+	depth_att.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+	depth_att.loadOp = vk::AttachmentLoadOp::eClear;
+	depth_att.storeOp = vk::AttachmentStoreOp::eDontCare;
+	depth_att.clearValue.depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
+	vk::RenderingInfo ri;
+	ri.renderArea = vk::Rect2D(vk::Offset2D(0, 0), swapchain.get_extent());
+	ri.layerCount = 1;
+	ri.colorAttachmentCount = 1;
+	ri.pColorAttachments = &color_att;
+	ri.pDepthAttachment = &depth_att;
+	ri.pStencilAttachment = (vkte::default_aspect_for_format(swapchain.get_depth_format()) & vk::ImageAspectFlagBits::eStencil) ? &depth_att : nullptr;
+	cb.beginRendering(ri);
+
+	vk::Viewport viewport;
 	viewport.x = 0.0f;
 	viewport.y = 0.0f;
-	viewport.width = swapchain.get_extent().width;
-	viewport.height = swapchain.get_extent().height;
+	viewport.width = float(swapchain.get_extent().width);
+	viewport.height = float(swapchain.get_extent().height);
 	viewport.minDepth = 0.0f;
 	viewport.maxDepth = 1.0f;
-	cb.setViewport(0, viewport);
-	vk::Rect2D scissor{};
+	cb.setViewportWithCount(viewport);
+	vk::Rect2D scissor;
 	scissor.offset = vk::Offset2D(0, 0);
 	scissor.extent = swapchain.get_extent();
-	cb.setScissor(0, scissor);
+	cb.setScissorWithCount(scissor);
 
-	ants.render(cb, app_state, swapchain.get_framebuffer(image_idx), swapchain.get_render_pass().get());
-	hash_grid.render(cb, app_state, swapchain.get_framebuffer(image_idx), swapchain.get_render_pass().get());
+	// the ants first, so that the hash grid, at the same depth, fills only what they leave
+	ants.draw(cb, pc);
+	hash_grid.draw(cb, pc);
 	if (app_state.show_ui) render_ui(cb, app_state);
-	cb.endRenderPass();
-	device_timers[app_state.current_frame].stop(cb, TIMER_RENDERING_ALL, vk::PipelineStageFlagBits::eBottomOfPipe);
+	else skip_ui();
+	cb.endRendering();
+	vkte::perform_image_layout_transition(cb, {
+		.image = color_image,
+		.range = { .aspect = vk::ImageAspectFlagBits::eColor, .base_mip_level = 0, .level_count = 1, .base_array_layer = 0, .layer_count = 1 },
+		.old_layout = vk::ImageLayout::eColorAttachmentOptimal,
+		.new_layout = vk::ImageLayout::ePresentSrcKHR,
+		.src_stage = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+		.src_access = vk::AccessFlagBits2::eColorAttachmentWrite,
+		.dst_stage = vk::PipelineStageFlagBits2::eBottomOfPipe,
+		.dst_access = vk::AccessFlagBits2::eNone
+	});
+	device_timer.stop(cb, TIMER_RENDERING_ALL, vk::PipelineStageFlagBits2::eBottomOfPipe);
 	cb.end();
 
-	std::vector<vk::Semaphore> render_wait_semaphores;
-	std::vector<vk::PipelineStageFlags> render_wait_stages;
-	render_wait_semaphores.push_back(syncs[app_state.current_frame].get_semaphore(S_IMAGE_AVAILABLE));
-	render_wait_semaphores.push_back(syncs[app_state.current_frame].get_semaphore(S_ANTS_STEP_FINISHED));
-	render_wait_stages.push_back(vk::PipelineStageFlagBits::eColorAttachmentOutput);
-	render_wait_stages.push_back(vk::PipelineStageFlagBits::eVertexInput);
-	std::vector<vk::Semaphore> render_signal_semaphores;
-	render_signal_semaphores.push_back(swapchain_sync.get_semaphore(image_idx));
-	render_signal_semaphores.push_back(syncs[app_state.current_frame].get_semaphore(S_FRAME_TO_FRAME));
-	vk::SubmitInfo render_si(render_wait_semaphores.size(), render_wait_semaphores.data(), render_wait_stages.data(), 1, &vcc.graphics_cbs[app_state.current_frame], render_signal_semaphores.size(), render_signal_semaphores.data());
-	vmc.get_graphics_queue().submit(render_si, syncs[app_state.current_frame].get_fence(F_RENDER_FINISHED));
+	const std::array<vk::SemaphoreSubmitInfo, 2> render_wait_infos{
+		vk::SemaphoreSubmitInfo(engine.get(timeline), Timeline::get_value(Timeline::COMPUTE, app_state.total_frames), vk::PipelineStageFlagBits2::eAllCommands),
+		vk::SemaphoreSubmitInfo(engine.get(frame_semaphores[current_frame][S_IMAGE_AVAILABLE]), 0, vk::PipelineStageFlagBits2::eColorAttachmentOutput)
+	};
+	const vk::Semaphore swapchain_semaphore = engine.get(swapchain_semaphores[image_idx.value]);
+	const vk::SemaphoreSubmitInfo render_signal_info(swapchain_semaphore, 0, vk::PipelineStageFlagBits2::eAllCommands);
+	const vk::CommandBufferSubmitInfo cbsi(cb);
+	command.submit_graphics(vk::SubmitInfo2({}, render_wait_infos, cbsi, render_signal_info));
 
-	vk::PresentInfoKHR present_info(1, &swapchain_sync.get_semaphore(image_idx), 1, &swapchain.get(), &image_idx);
-	vk::Result result = vmc.get_present_queue().presentKHR(present_info);
-	if (result == vk::Result::eSuboptimalKHR)
-	{
-		vk::OutOfDateKHRError e("Swapchain suboptimal!");
-		throw e;
-	}
+	const vk::PresentInfoKHR present_info(1, &swapchain_semaphore, 1, &swapchain.get(), &image_idx.value);
+	const vk::Result result = engine.present(present_info);
+	if (result == vk::Result::eSuboptimalKHR) app_state.need_resize = true;
 	else if (result != vk::Result::eSuccess) VKTE_THROW("Failed to present!");
 }

@@ -1,9 +1,9 @@
 #pragma once
-#include <cstdint>
 #include <array>
-#include <vulkan/vulkan.hpp>
-#include "vec2.hpp"
-#include "vec3.hpp"
+#include <cstdint>
+#include "glm/vec2.hpp"
+#include "glm/vec3.hpp"
+#include "shared/uniform_buffer.slang"
 
 enum TimerNames {
 	TIMER_RENDERING_ALL = 0,
@@ -12,68 +12,51 @@ enum TimerNames {
 	TIMER_COUNT
 };
 
-struct VisualizationCodeData
+// what the UI edits of how the simulation is shown
+struct Visualizations
 {
-	// food with viridis
-	uint32_t food = 1;
-	glm::vec3 food_color = glm::vec3(0.0f, 0.0f, 0.0f);
-	// food pheromones in dark yellow
-	uint32_t food_pheromone = 5;
-	glm::vec3 food_pheromone_color = glm::vec3(0.0f, 0.4f, 0.4f);
-	// nest with plasma
-	uint32_t nest = 2;
-	glm::vec3 nest_color = glm::vec3(0.0f, 0.0f, 0.0f);
-	// nest pheromones in dark blue
-	uint32_t nest_pheromone = 5;
-	glm::vec3 nest_pheromone_color = glm::vec3(0.0f, 0.0f, 0.4f);
-	// ant without food in blue
+	Visualization food{.color = glm::vec3(0.0f), .color_map = ColorMap::Viridis};
+	// in dark yellow
+	Visualization food_pheromone{.color = glm::vec3(0.0f, 0.4f, 0.4f), .color_map = ColorMap::CustomColor};
+	Visualization nest{.color = glm::vec3(0.0f), .color_map = ColorMap::Plasma};
+	// in dark blue
+	Visualization nest_pheromone{.color = glm::vec3(0.0f, 0.0f, 0.4f), .color_map = ColorMap::CustomColor};
+	// blue
 	glm::vec3 ant_wo_food_color = glm::vec3(0.0f, 0.0f, 1.0f);
-	// ant without food leading edge in pink
+	// the leading edge in pink
 	glm::vec3 ant_wo_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
-	// ant with food in yellow
+	// yellow
 	glm::vec3 ant_w_food_color = glm::vec3(0.0f, 1.0f, 1.0f);
-	// ant with food leading edge in pink
+	// the leading edge in pink
 	glm::vec3 ant_w_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
 };
 
-struct AppState {
-public:
-	AppState() : current_frame(0), total_frames(0), total_time(1.0f/60.0f), vsync(true), show_ui(true)
-	{
-		for (int i = 0; i < device_timings.size(); i++) device_timings[i] = 0.0f;
-	}
-
-	VisualizationCodeData vis_code_data;
-	glm::vec2 add_food_pos;
-	uint32_t add_food_amount = 0;
-	glm::vec2 visible_range_min = glm::vec2(-5.0, -5.0);
-	glm::vec2 visible_range_max = glm::vec2(5.0, 5.0);
+struct AppState
+{
+	Visualizations visualizations;
+	glm::vec2 add_food_pos = glm::vec2(0.0f, 0.0f);
+	int32_t add_food_amount = 0;
+	glm::vec2 visible_range_min = glm::vec2(-5.0f, -5.0f);
+	glm::vec2 visible_range_max = glm::vec2(5.0f, 5.0f);
 	const uint32_t ant_count = 1'00;
 	const uint32_t hash_grid_capacity = 100'000;
-	uint32_t current_frame = 0;
 	uint32_t total_frames = 0;
-	std::array<float, TIMER_COUNT> device_timings;
-	float frame_time = 1.0 / 60.0;
-	float frame_time_ema = 1.0 / 60.0;
-	float total_time = 1.0 / 60.0;
-	bool vsync = true;
+	std::array<float, TIMER_COUNT> device_timings{};
+	// the time a frame took
+	float frame_time = 1.0f / 60.0f;
+	// what the simulation advances by per frame, so that a slow frame doesn't make the ants jump
+	float capped_frame_time = 1.0f / 60.0f;
+	float frame_time_ema = 1.0f / 60.0f;
+	// the simulated time, the sum of the capped frame times
+	float total_time = 1.0f / 60.0f;
+	// in pixels, the swapchain's
+	glm::ivec2 window_extent = glm::ivec2(1000, 1000);
+	// in window coordinates, which mouse positions are in and which differ from pixels on scaled displays
+	glm::vec2 window_size = glm::vec2(1000.0f, 1000.0f);
 	bool show_ui = true;
-
-	vk::Extent2D get_render_extent() const { return render_extent; }
-	vk::Extent2D get_window_extent() const { return window_extent; }
-	void set_render_extent(vk::Extent2D extent)
-	{
-		render_extent = extent;
-		aspect_ratio = float(render_extent.width) / float(render_extent.height);
-		window_extent = vk::Extent2D(aspect_ratio * 1000, 1000);
-	}
-	void set_window_extent(vk::Extent2D extent)
-	{
-		window_extent = extent;
-	}
-
-private:
-	vk::Extent2D render_extent = vk::Extent2D(1920, 1080);
-	float aspect_ratio = float(render_extent.width) / float(render_extent.height);
-	vk::Extent2D window_extent = vk::Extent2D(aspect_ratio * 1000, 1000);
+	bool need_resize = false;
+	bool reload_shaders = false;
+	bool shaders_compiled = true;
+	// where panning started, in pixels from the window's top left corner, to put the cursor back there
+	glm::vec2 pan_start_pos = glm::vec2(0.0f, 0.0f);
 };

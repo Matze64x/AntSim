@@ -2,11 +2,11 @@
 
 #include <chrono>
 
-template<class Precision = float>
-class Timer
+template<class Precision>
+class TimerTemplate
 {
 public:
-	Timer() : t(std::chrono::high_resolution_clock::now())
+	TimerTemplate() : t(std::chrono::steady_clock::now())
 	{}
 
 	// default timer unit is seconds
@@ -14,16 +14,19 @@ public:
 	inline Precision restart()
 	{
 		Precision elapsed_time = elapsed<Period>();
-		t = std::chrono::high_resolution_clock::now();
+		t = std::chrono::steady_clock::now();
 		return elapsed_time;
 	}
 
 	template<class Period = std::ratio<1, 1>>
 	inline Precision elapsed() const
 	{
-		return std::chrono::duration<Precision, Period>(std::chrono::high_resolution_clock::now() - t).count();
+		return std::chrono::duration<Precision, Period>(std::chrono::steady_clock::now() - t).count();
 	}
 
 private:
-	std::chrono::time_point<std::chrono::high_resolution_clock> t;
+	std::chrono::time_point<std::chrono::steady_clock> t;
 };
+
+using Timer = TimerTemplate<float>;
+using TimerDouble = TimerTemplate<double>;
