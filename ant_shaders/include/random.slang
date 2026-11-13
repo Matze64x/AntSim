@@ -23,9 +23,12 @@ struct Random
 		return next_float() * (max - min) + min;
 	}
 
-	[mutating] int next_int(int min, int max)
+	// uniformly distributed in the disk of radius 1 around the origin
+	[mutating] float2 next_float2_in_disk()
 	{
-		return int(next_float(float(min), float(max)));
+		const float radius = sqrt(next_float());
+		const float angle = next_float(0.0, 2.0 * float.getPi());
+		return radius * float2(cos(angle), sin(angle));
 	}
 
 	[mutating] float2 next_float2(float min, float max)

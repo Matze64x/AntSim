@@ -14,6 +14,8 @@ ConstantBuffer<PushConstants> pc;
 
 static const float ANT_SPEED = 0.2;
 static const float ANT_SEARCH_RADIUS = 0.2;
+// the cells an ant looks at per frame for a better target
+static const int TARGET_SEARCH_SAMPLE_COUNT = 32;
 // how far ants may go from the origin along each axis
 static const float WORLD_BOUND = 100.0;
 
@@ -22,21 +24,17 @@ static const float WORLD_BOUND = 100.0;
 void look_for_target(inout Ant ant, HashGrid hash_grid, Nest nest, AntTime time, inout Random rng)
 {
 	const int2 ant_hash_grid_pos = get_hash_grid_pos(ant.pos);
-	const int cell_radius = int(ANT_SEARCH_RADIUS / HASH_GRID_CELL_LENGTH);
 	Optional<uint> target_slot = none;
 	TargetPriority target_priority = ant.target_priority;
 	float target_distance = float.maxValue;
-	// sample about a quarter of the search area at random (cells may be sampled more than once, and a cell that exists
-	// counts as two samples)
-	for (int i = 0; i < cell_radius * cell_radius * 2; i++)
+	// cells at random positions within the search radius (a cell may be sampled more than once)
+	for (int i = 0; i < TARGET_SEARCH_SAMPLE_COUNT; i++)
 	{
-		const int x = rng.next_int(-cell_radius, cell_radius);
-		const int y = rng.next_int(-cell_radius, cell_radius);
+		const int2 offset = int2(round(rng.next_float2_in_disk() * (ANT_SEARCH_RADIUS / HASH_GRID_CELL_LENGTH)));
 		// skip the cell in which the ant currently is
-		if (x == 0 && y == 0) continue;
-		const Optional<uint> slot = hash_grid.get_cell(ant_hash_grid_pos + int2(x, y));
+		if (all(offset == 0)) continue;
+		const Optional<uint> slot = hash_grid.get_cell(ant_hash_grid_pos + offset);
 		if (!slot.hasValue) continue;
-		i++;
 		const HashGridCell cell = hash_grid.cells[slot.value];
 		TargetPriority priority = TargetPriority::None;
 		float distance_to_goal = float.maxValue;
