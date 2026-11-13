@@ -31,13 +31,26 @@ struct Visualizations
 	glm::vec3 ant_w_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
 };
 
+// The part of the world the window shows: as tall as height and as wide as the window's aspect ratio makes it, so that a
+// world unit is as long along both axes on the screen.
+struct View
+{
+	glm::vec2 center = glm::vec2(0.0f, 0.0f);
+	float height = 10.0f;
+
+	glm::vec2 get_extent(glm::vec2 window_size) const { return glm::vec2(height * window_size.x / window_size.y, height); }
+	glm::vec2 get_min(glm::vec2 window_size) const { return center - get_extent(window_size) / 2.0f; }
+	glm::vec2 get_max(glm::vec2 window_size) const { return center + get_extent(window_size) / 2.0f; }
+	// the world position at a point in the window, in window coordinates from its top left corner
+	glm::vec2 to_world(glm::vec2 window_point, glm::vec2 window_size) const { return get_min(window_size) + window_point / window_size * get_extent(window_size); }
+};
+
 struct AppState
 {
 	Visualizations visualizations;
 	glm::vec2 add_food_pos = glm::vec2(0.0f, 0.0f);
 	int32_t add_food_amount = 0;
-	glm::vec2 visible_range_min = glm::vec2(-5.0f, -5.0f);
-	glm::vec2 visible_range_max = glm::vec2(5.0f, 5.0f);
+	View view;
 	const uint32_t ant_count = 1'00;
 	const uint32_t hash_grid_capacity = 100'000;
 	uint32_t total_frames = 0;
@@ -57,6 +70,6 @@ struct AppState
 	bool need_resize = false;
 	bool reload_shaders = false;
 	bool shaders_compiled = true;
-	// where panning started, in pixels from the window's top left corner, to put the cursor back there
-	glm::vec2 pan_start_pos = glm::vec2(0.0f, 0.0f);
+	// while panning, the world position that stays under the cursor
+	glm::vec2 pan_anchor = glm::vec2(0.0f, 0.0f);
 };

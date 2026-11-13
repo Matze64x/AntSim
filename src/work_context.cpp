@@ -111,8 +111,8 @@ bool WorkContext::reload_shaders()
 
 void WorkContext::update_uniform_buffer(AppState& app_state)
 {
-	uniform_buffer_data.range_min = app_state.visible_range_min;
-	uniform_buffer_data.range_max = app_state.visible_range_max;
+	uniform_buffer_data.range_min = app_state.view.get_min(app_state.window_size);
+	uniform_buffer_data.range_max = app_state.view.get_max(app_state.window_size);
 	const Visualizations& visualizations = app_state.visualizations;
 	uniform_buffer_data.food = visualizations.food;
 	uniform_buffer_data.food_pheromone = visualizations.food_pheromone;

@@ -21,11 +21,11 @@ The first build compiles vkTurboEngine's vendored Slang library, which takes a w
 
 In a Debug build, compiling the shaders at startup takes ~10 s (Debug Slang), so the window stays black meanwhile. Presenting uses FIFO, which on Wayland blocks while the window isn't shown (other workspace, locked screen), so the loop stalls and doesn't react to closing until it is visible; for headless tests switch `present_settings` in `run_application()` to `eMailbox` temporarily.
 
-Controls: left mouse drag pans (the view follows the cursor), the mouse wheel zooms, the right mouse button adds food under the cursor, **G** toggles the UI, **F5** reloads the shaders.
+Controls: left mouse drag pans (the grabbed point stays under the cursor), the mouse wheel zooms about the cursor, the right mouse button adds food under the cursor, **G** toggles the UI, **F5** reloads the shaders.
 
 ## Architecture
 
-- `main()` finds `ant_shaders/` and calls `run_application()` (`src/application.cpp`), which creates the `vkte::Engine` and the `WorkContext` and runs the event loop; UI requests (reload shaders) are flags in `AppState` that the loop handles between frames.
+- `main()` finds `ant_shaders/` and calls `run_application()` (`src/application.cpp`), which creates the `vkte::Engine` and the `WorkContext` and runs the event loop; UI requests (reload shaders) are flags in `AppState` that the loop handles between frames. `AppState::view` (`View`) is the shown part of the world: a center and a height, whose width follows the window's aspect ratio so that world units are square on screen; mouse positions map to the world with `View::to_world()` and `AppState::window_size` (window coordinates, not the swapchain's pixels).
 - `WorkContext` (`src/work_context.cpp`) owns the two components and records each frame: after `Engine::begin_frame()` it updates the frame's uniform buffer, records the simulation into the frame's compute command buffer (on the first frame preceded by the clear passes), which signals a timeline semaphore that the graphics submission waits for, then draws the ants, the hash grid and the UI with dynamic rendering. vkte orders frames itself (every `Command::submit_*()` of a frame waits for the previous frame's).
 - `Ants` and `HashGrid` (`src/ants.cpp`, `src/hash_grid.cpp`) are `vkte::Component`s: `declare_resources()` creates their bindless buffers and declares their pipelines; they record clear, compute and draw.
 - Every pipeline takes the same `PushConstants` (`ant_shaders/shared/push_constants.slang`): the bindless buffer handles, which shaders resolve with `vkte::get_buffer<T>()`, and the ant count and hash grid capacity.
