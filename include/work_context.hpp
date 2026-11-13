@@ -46,6 +46,7 @@ private:
 
 	void update_uniform_buffer(AppState& app_state);
 	PushConstants get_push_constants(const AppState& app_state) const;
+	void update_frame_times(AppState& app_state);
 	void record_and_present(AppState& app_state);
 	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc);
 	void record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, AppState& app_state, const PushConstants& pc);

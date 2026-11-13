@@ -53,6 +53,20 @@ WorkContext::~WorkContext()
 void WorkContext::draw_frame(AppState& app_state)
 {
 	engine.begin_frame();
+	try
+	{
+		record_and_present(app_state);
+	}
+	catch (const vk::OutOfDateKHRError&)
+	{
+		app_state.need_resize = true;
+	}
+	engine.end_frame();
+}
+
+// only for frames that run, so that the simulated time doesn't advance without the simulation
+void WorkContext::update_frame_times(AppState& app_state)
+{
 	const uint32_t current_frame = engine.get_current_frame();
 	if (app_state.total_frames > vkte::frames_in_flight)
 	{
@@ -65,19 +79,11 @@ void WorkContext::draw_frame(AppState& app_state)
 	}
 	else frame_timers[current_frame].restart();
 	app_state.total_frames++;
-	try
-	{
-		record_and_present(app_state);
-	}
-	catch (const vk::OutOfDateKHRError&)
-	{
-		app_state.need_resize = true;
-	}
-	engine.end_frame();
 }
 
 // The simulation and the rendering go into one command buffer: vkte runs the frames one after another anyway, so a
-// separate compute queue wouldn't overlap anything. A frame whose image can't be acquired skips the simulation too.
+// separate compute queue wouldn't overlap anything. A frame whose image can't be acquired skips the simulation too, and
+// its time.
 void WorkContext::record_and_present(AppState& app_state)
 {
 	vkte::Command& command = engine.get_command();
@@ -87,6 +93,7 @@ void WorkContext::record_and_present(AppState& app_state)
 	const vk::ResultValue<uint32_t> image_idx = engine.acquire_next_image(image_available);
 	if (image_idx.result == vk::Result::eSuboptimalKHR) app_state.need_resize = true;
 	else if (image_idx.result != vk::Result::eSuccess) VKTE_THROW("Failed to acquire next image!");
+	update_frame_times(app_state);
 
 	update_uniform_buffer(app_state);
 	const PushConstants pc = get_push_constants(app_state);
