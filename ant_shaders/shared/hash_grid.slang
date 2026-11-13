@@ -19,11 +19,10 @@ struct HashGridCell
 {
 	int2 index;
 	int32_t food_amount;
-	float pheromone_lifetime;
+	// the simulated time at which the pheromone was laid; it expires PHEROMONE_LIFETIME later
+	float pheromone_time;
 	float pheromone_distance;
 	Pheromone pheromone;
-	// 0 or 1 (a bool's size differs between Slang's and C++'s buffers): whether the cell holds the index's data
-	uint32_t active;
-	// 0 or 1, set atomically while an ant updates the cell
+	// 0 or 1 (a bool's size differs between Slang's and C++'s buffers), set atomically while an ant updates the cell
 	uint32_t locked;
 };

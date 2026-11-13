@@ -20,8 +20,8 @@ void HashGrid::declare_resources(vkte::ResourceDeclarations& declarations, vkte:
 
 	vkte::Pipeline::ComputeSettings compute_settings;
 	compute_settings.push_constant_byte_size = sizeof(PushConstants);
-	compute_settings.shader = vkte::Shader("hash_grid.slang", vk::ShaderStageFlagBits::eCompute, "step_cells");
-	step_pipeline = declarations.add_pipeline(compute_settings);
+	compute_settings.shader = vkte::Shader("hash_grid.slang", vk::ShaderStageFlagBits::eCompute, "add_food");
+	add_food_pipeline = declarations.add_pipeline(compute_settings);
 
 	vkte::Pipeline::GraphicsSettings render_settings;
 	render_settings.shaders.push_back(vkte::Shader("hash_grid.slang", vk::ShaderStageFlagBits::eVertex, "vertex_main"));
@@ -39,21 +39,16 @@ void HashGrid::destruct(vkte::MemoryManager& memory_manager)
 	hash_grid_buffer = vkte::BufferHandle();
 }
 
-void HashGrid::dispatch(vk::CommandBuffer& cb, vkte::PipelineHandle pipeline, const PushConstants& pc)
-{
-	engine.bind(cb, pipeline);
-	cb.pushConstants(engine.get_pipeline_layout(pipeline), vk::ShaderStageFlagBits::eCompute, 0, sizeof(pc), &pc);
-	cb.dispatch((capacity + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE, 1, 1);
-}
-
 void HashGrid::reset(vk::CommandBuffer& cb)
 {
 	cb.fillBuffer(engine.get_memory_manager().get_buffer(hash_grid_buffer).get(), 0, vk::WholeSize, 0);
 }
 
-void HashGrid::compute(vk::CommandBuffer& cb, const PushConstants& pc)
+void HashGrid::add_food(vk::CommandBuffer& cb, const PushConstants& pc)
 {
-	dispatch(cb, step_pipeline, pc);
+	engine.bind(cb, add_food_pipeline);
+	cb.pushConstants(engine.get_pipeline_layout(add_food_pipeline), vk::ShaderStageFlagBits::eCompute, 0, sizeof(pc), &pc);
+	cb.dispatch(1, 1, 1);
 }
 
 void HashGrid::draw(vk::CommandBuffer& cb, const PushConstants& pc)

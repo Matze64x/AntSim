@@ -168,15 +168,15 @@ void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& 
 		hash_grid.reset(cb);
 		transfer_to_compute_barrier(cb);
 	}
-	device_timer.reset(cb, TIMER_ANTS_STEP);
-	device_timer.reset(cb, TIMER_HASH_GRID_STEP);
-	device_timer.start(cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	device_timer.reset(cb, TIMER_SIMULATION);
+	device_timer.start(cb, TIMER_SIMULATION, vk::PipelineStageFlagBits2::eComputeShader);
+	if (pc.food_amount > 0)
+	{
+		hash_grid.add_food(cb, pc);
+		compute_to_compute_barrier(cb);
+	}
 	ants.compute(cb, pc);
-	device_timer.stop(cb, TIMER_ANTS_STEP, vk::PipelineStageFlagBits2::eComputeShader);
-	compute_to_compute_barrier(cb);
-	device_timer.start(cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits2::eComputeShader);
-	hash_grid.compute(cb, pc);
-	device_timer.stop(cb, TIMER_HASH_GRID_STEP, vk::PipelineStageFlagBits2::eComputeShader);
+	device_timer.stop(cb, TIMER_SIMULATION, vk::PipelineStageFlagBits2::eComputeShader);
 	compute_to_graphics_barrier(cb);
 }
 
@@ -224,9 +224,8 @@ void WorkContext::render_ui(vk::CommandBuffer& cb, AppState& app_state)
 
 	ImGui::Text("%.4f ms; FPS: %.2f", app_state.frame_time_ema * 1000, 1.0 / app_state.frame_time_ema);
 	ImGui::Text("total time: %.4f s", app_state.total_time);
-	ImGui::Text("RENDERING_ALL: %.4f ms", app_state.device_timings[TIMER_RENDERING_ALL]);
-	ImGui::Text("ANTS_STEP: %.4f ms", app_state.device_timings[TIMER_ANTS_STEP]);
-	ImGui::Text("HASH_GRID_STEP: %.4f ms", app_state.device_timings[TIMER_HASH_GRID_STEP]);
+	ImGui::Text("simulation: %.4f ms", app_state.device_timings[TIMER_SIMULATION]);
+	ImGui::Text("rendering: %.4f ms", app_state.device_timings[TIMER_RENDERING]);
 	ImGui::PopItemWidth();
 	ui.end_frame(cb);
 }
@@ -235,8 +234,8 @@ void WorkContext::record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, Ap
 {
 	vkte::Swapchain& swapchain = engine.get_swapchain();
 	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[engine.get_current_frame()]);
-	device_timer.reset(cb, TIMER_RENDERING_ALL);
-	device_timer.start(cb, TIMER_RENDERING_ALL, vk::PipelineStageFlagBits2::eTopOfPipe);
+	device_timer.reset(cb, TIMER_RENDERING);
+	device_timer.start(cb, TIMER_RENDERING, vk::PipelineStageFlagBits2::eTopOfPipe);
 
 	const vk::Image color_image = swapchain.get_image(image_idx);
 	vkte::perform_image_layout_transition(cb, {
@@ -291,5 +290,5 @@ void WorkContext::record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, Ap
 		.dst_stage = vk::PipelineStageFlagBits2::eBottomOfPipe,
 		.dst_access = vk::AccessFlagBits2::eNone
 	});
-	device_timer.stop(cb, TIMER_RENDERING_ALL, vk::PipelineStageFlagBits2::eBottomOfPipe);
+	device_timer.stop(cb, TIMER_RENDERING, vk::PipelineStageFlagBits2::eBottomOfPipe);
 }

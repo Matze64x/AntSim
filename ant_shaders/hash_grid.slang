@@ -10,42 +10,18 @@ import vkte;
 [[vk::push_constant]]
 ConstantBuffer<PushConstants> pc;
 
-HashGrid get_hash_grid()
-{
-	return HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity);
-}
-
-// adds the food of the push constants, ages the pheromones and frees the cells without food whose pheromones expired
+// Puts the push constants' food into the cell at its position, taking the slot from whatever cell had it. A single
+// thread, since it writes one cell.
 [shader("compute")]
-[numthreads(WORKGROUP_SIZE, 1, 1)]
-void step_cells(uint3 dispatch_thread_id : SV_DispatchThreadID)
+[numthreads(1, 1, 1)]
+void add_food()
 {
-	const uint slot = dispatch_thread_id.x;
-	const HashGrid hash_grid = get_hash_grid();
-	if (!hash_grid.is_valid(slot)) return;
-	const UniformBufferData ub = vkte::get_single_element_buffer<UniformBufferData>(pc.uniform_buffer);
-	HashGridCell* cell = &hash_grid.cells[slot];
-	if (pc.food_amount > 0)
-	{
-		const int2 food_hash_grid_pos = get_hash_grid_pos(pc.food_pos);
-		if (slot == hash_grid.get_slot(food_hash_grid_pos))
-		{
-			cell.food_amount = pc.food_amount;
-			cell.active = 1;
-			cell.index = food_hash_grid_pos;
-		}
-	}
-	if (cell.food_amount == 0 && cell.pheromone_lifetime > PHEROMONE_LIFETIME)
-	{
-		cell.active = 0;
-		cell.pheromone = Pheromone::None;
-		cell.locked = 0;
-	}
-	else
-	{
-		cell.locked = 0;
-		cell.pheromone_lifetime += ub.frame_time;
-	}
+	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, 0.0);
+	const int2 food_hash_grid_pos = get_hash_grid_pos(pc.food_pos);
+	HashGridCell* cell = &hash_grid.cells[hash_grid.get_slot(food_hash_grid_pos)];
+	if (any(cell.index != food_hash_grid_pos)) cell.pheromone = Pheromone::None;
+	cell.index = food_hash_grid_pos;
+	cell.food_amount = pc.food_amount;
 }
 
 struct ScreenVertex
@@ -75,13 +51,14 @@ float4 fragment_main(ScreenVertex input) : SV_Target
 	{
 		return ub.visualizations.nest.get_color(nest.get_level_progress());
 	}
-	const HashGrid hash_grid = get_hash_grid();
+	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, ub.total_time);
 	const Optional<uint> slot = hash_grid.get_cell(get_hash_grid_pos(pos));
 	if (!slot.hasValue) return float4(0.0, 0.0, 0.0, 1.0);
 	const HashGridCell cell = hash_grid.cells[slot.value];
-	const float pheromone_freshness = (PHEROMONE_LIFETIME - cell.pheromone_lifetime) / PHEROMONE_LIFETIME;
+	const float pheromone_freshness = hash_grid.get_pheromone_freshness(cell);
+	const Pheromone pheromone = hash_grid.get_pheromone(cell);
 	if (cell.food_amount > 0 && ub.visualizations.food.is_shown()) return ub.visualizations.food.get_color(float(cell.food_amount) / 255.0);
-	if (cell.pheromone == Pheromone::Food && ub.visualizations.food_pheromone.is_shown()) return ub.visualizations.food_pheromone.get_color(pheromone_freshness);
-	if (cell.pheromone == Pheromone::Nest && ub.visualizations.nest_pheromone.is_shown()) return ub.visualizations.nest_pheromone.get_color(pheromone_freshness);
+	if (pheromone == Pheromone::Food && ub.visualizations.food_pheromone.is_shown()) return ub.visualizations.food_pheromone.get_color(pheromone_freshness);
+	if (pheromone == Pheromone::Nest && ub.visualizations.nest_pheromone.is_shown()) return ub.visualizations.nest_pheromone.get_color(pheromone_freshness);
 	return float4(0.0, 0.0, 0.0, 1.0);
 }

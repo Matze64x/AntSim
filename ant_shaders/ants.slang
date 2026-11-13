@@ -47,7 +47,7 @@ void look_for_target(inout Ant ant, HashGrid hash_grid, Nest nest, AntTime time,
 				priority = TargetPriority::FoodOrNest;
 				distance_to_goal = 0.0;
 			}
-			else if (cell.pheromone == Pheromone::Food)
+			else if (hash_grid.get_pheromone(cell) == Pheromone::Food)
 			{
 				priority = TargetPriority::Pheromone;
 				distance_to_goal = cell.pheromone_distance;
@@ -61,7 +61,7 @@ void look_for_target(inout Ant ant, HashGrid hash_grid, Nest nest, AntTime time,
 				priority = TargetPriority::FoodOrNest;
 				distance_to_goal = nest_distance;
 			}
-			else if (cell.pheromone == Pheromone::Nest)
+			else if (hash_grid.get_pheromone(cell) == Pheromone::Nest)
 			{
 				priority = TargetPriority::Pheromone;
 				distance_to_goal = cell.pheromone_distance;
@@ -101,7 +101,7 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	vkte::Buffer<Ant> ants = vkte::get_buffer<Ant>(pc.ants);
 	Nest* nest_pointer = vkte::get_buffer<Nest>(pc.nest).get_pointer();
 	const Nest nest = nest_pointer[0];
-	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity);
+	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, ub.total_time);
 	const AntTime time = AntTime(ub.total_time, ub.frame_time, ant_index, pc.ant_count, 0.7982);
 	Random rng = Random(ant_index + pc.ant_count * ub.frame_idx + 27349843);
 	Ant ant = ants[ant_index];
@@ -152,7 +152,7 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 		{
 			// a pheromone that leads where the ant comes from tells a shorter distance to it
 			const Pheromone trail = ant.has_food != 0 ? Pheromone::Food : Pheromone::Nest;
-			if (cell.pheromone == trail && cell.pheromone_distance < ant.distance_to_poi - 2.0 * HASH_GRID_CELL_LENGTH) ant.distance_to_poi = cell.pheromone_distance;
+			if (hash_grid.get_pheromone(cell) == trail && cell.pheromone_distance < ant.distance_to_poi - 2.0 * HASH_GRID_CELL_LENGTH) ant.distance_to_poi = cell.pheromone_distance;
 		}
 	}
 	ants[ant_index] = ant;
@@ -168,7 +168,7 @@ void update_cell(inout Ant ant, HashGrid hash_grid, uint slot, AntTime time, ino
 	// an ant emits pheromones more likely the longer it saw none of its own kind
 	const float step_length = ant.has_food != 0 ? 0.5 : 0.2;
 	const float reset_probability = ant.has_food != 0 ? 0.4 : 0.5;
-	if (cell.pheromone == trail && time.chance(rng, step_length, reset_probability)) ant.pheromone_emit_scale = 1.0;
+	if (hash_grid.get_pheromone(cell) == trail && time.chance(rng, step_length, reset_probability)) ant.pheromone_emit_scale = 1.0;
 	else if (time.chance(rng, step_length, 0.5)) ant.pheromone_emit_scale += 1.0;
 	if (ant.has_food == 0 && cell.food_amount > 0)
 	{
@@ -181,7 +181,7 @@ void update_cell(inout Ant ant, HashGrid hash_grid, uint slot, AntTime time, ino
 	if (time.chance(rng, 0.4, emit_pheromone_probability))
 	{
 		cell.pheromone = trail;
-		cell.pheromone_lifetime = 0.0;
+		cell.pheromone_time = hash_grid.time;
 		cell.pheromone_distance = ant.distance_to_poi;
 	}
 	hash_grid.cells[slot] = cell;
@@ -196,7 +196,7 @@ void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	if (ant_index >= pc.ant_count) return;
 	const UniformBufferData ub = vkte::get_single_element_buffer<UniformBufferData>(pc.uniform_buffer);
 	vkte::Buffer<Ant> ants = vkte::get_buffer<Ant>(pc.ants);
-	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity);
+	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, ub.total_time);
 	const AntTime time = AntTime(ub.total_time, ub.frame_time, ant_index, pc.ant_count, 0.271);
 	Random rng = Random(ant_index + pc.ant_count * ub.frame_idx + 43598763);
 	Ant ant = ants[ant_index];

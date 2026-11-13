@@ -24,15 +24,30 @@ uint hash_jenkins32(uint a)
 }
 
 // The hash grid's cells, through a pointer, so that writing a member writes only that member. Each grid position has
-// one slot; a position whose slot holds another one has no cell.
+// one slot; a position whose slot holds another one has no cell. A cell holds its position's data while it is alive, has
+// food or a pheromone that hasn't expired; a slot whose cell isn't alive is free for any position.
 struct HashGrid
 {
 	HashGridCell* cells;
 	uint capacity;
+	// the simulated time, which pheromones expire by
+	float time;
 
-	bool is_valid(uint slot)
+	// none once the pheromone expired
+	Pheromone get_pheromone(HashGridCell cell)
 	{
-		return slot < capacity;
+		return time - cell.pheromone_time <= PHEROMONE_LIFETIME ? cell.pheromone : Pheromone::None;
+	}
+
+	// 1 when the pheromone was just laid, 0 when it expires
+	float get_pheromone_freshness(HashGridCell cell)
+	{
+		return 1.0 - (time - cell.pheromone_time) / PHEROMONE_LIFETIME;
+	}
+
+	bool is_alive(HashGridCell cell)
+	{
+		return cell.food_amount > 0 || get_pheromone(cell) != Pheromone::None;
 	}
 
 	uint get_slot(int2 index)
@@ -40,16 +55,15 @@ struct HashGrid
 		return (hash_jenkins32(uint(index.x) ^ 0xcf5ae914u) ^ hash_jenkins32(uint(index.y))) % capacity;
 	}
 
-	// the slot of the index's cell, locked and activated for the index if it was free; none if another thread holds the
-	// lock or another index the slot
+	// the slot of the index's cell, locked and taken for the index if it was free; none if another thread holds the lock
+	// or another index the slot
 	Optional<uint> try_acquire_cell(int2 index)
 	{
 		const uint slot = get_slot(index);
 		Atomic<uint32_t>* locked = (Atomic<uint32_t>*)&cells[slot].locked;
 		if (locked.load() != 0 || locked.compareExchange(0, 1) != 0) return none;
-		if (cells[slot].active == 0)
+		if (!is_alive(cells[slot]))
 		{
-			cells[slot].active = 1;
 			cells[slot].pheromone = Pheromone::None;
 			cells[slot].index = index;
 			return slot;
@@ -69,7 +83,7 @@ struct HashGrid
 	Optional<uint> get_cell(int2 index)
 	{
 		const uint slot = get_slot(index);
-		if (cells[slot].active == 0 || any(cells[slot].index != index)) return none;
+		if (!is_alive(cells[slot]) || any(cells[slot].index != index)) return none;
 		return slot;
 	}
 }

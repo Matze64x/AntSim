@@ -6,9 +6,8 @@
 #include "shared/uniform_buffer.slang"
 
 enum TimerNames {
-	TIMER_RENDERING_ALL = 0,
-	TIMER_ANTS_STEP = 1,
-	TIMER_HASH_GRID_STEP = 2,
+	TIMER_SIMULATION = 0,
+	TIMER_RENDERING = 1,
 	TIMER_COUNT
 };
 

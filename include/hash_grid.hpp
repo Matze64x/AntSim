@@ -16,8 +16,8 @@ public:
 	void destruct(vkte::MemoryManager& memory_manager) override;
 	// records emptying every cell
 	void reset(vk::CommandBuffer& cb);
-	// adds the food of the push constants, ages the pheromones and frees the cells without food whose pheromones expired
-	void compute(vk::CommandBuffer& cb, const PushConstants& pc);
+	// puts the push constants' food into the cell at its position
+	void add_food(vk::CommandBuffer& cb, const PushConstants& pc);
 	// the hash grid and the nest, covering the screen
 	void draw(vk::CommandBuffer& cb, const PushConstants& pc);
 	vkte::BufferHandle get_buffer() const { return hash_grid_buffer; }
@@ -27,7 +27,5 @@ private:
 	uint32_t capacity;
 	vkte::BufferHandle hash_grid_buffer;
 	vkte::PipelineHandle render_pipeline;
-	vkte::PipelineHandle step_pipeline;
-
-	void dispatch(vk::CommandBuffer& cb, vkte::PipelineHandle pipeline, const PushConstants& pc);
+	vkte::PipelineHandle add_food_pipeline;
 };
