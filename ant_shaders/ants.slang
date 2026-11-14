@@ -24,7 +24,7 @@ static const float WORLD_BOUND = 100.0;
 void look_for_target(inout Ant ant, HashGrid hash_grid, Nest nest, AntTime ant_time, inout Random rng)
 {
 	const int2 ant_hash_grid_pos = get_hash_grid_pos(ant.pos);
-	Optional<uint> target_slot = none;
+	Optional<int2> target_hash_grid_pos = none;
 	TargetPriority target_priority = ant.target_priority;
 	float target_distance = float.maxValue;
 	// cells at random positions within the search radius (a cell may be sampled more than once)
@@ -33,7 +33,8 @@ void look_for_target(inout Ant ant, HashGrid hash_grid, Nest nest, AntTime ant_t
 		const int2 offset = int2(round(rng.get_float2_in_disk() * (ANT_SEARCH_RADIUS / HASH_GRID_CELL_LENGTH)));
 		// skip the cell in which the ant currently is
 		if (all(offset == 0)) continue;
-		const Optional<uint> slot = hash_grid.get_cell(ant_hash_grid_pos + offset);
+		const int2 hash_grid_pos = ant_hash_grid_pos + offset;
+		const Optional<uint> slot = hash_grid.get_cell(hash_grid_pos);
 		if (!slot.hasValue) continue;
 		const HashGridCell cell = hash_grid.cells[slot.value];
 		TargetPriority priority = TargetPriority::None;
@@ -45,37 +46,37 @@ void look_for_target(inout Ant ant, HashGrid hash_grid, Nest nest, AntTime ant_t
 				priority = TargetPriority::FoodOrNest;
 				distance_to_goal = 0.0;
 			}
-			else if (hash_grid.get_pheromone(cell) == Pheromone::Food)
+			else if (hash_grid.is_fresh(cell.food_trail))
 			{
 				priority = TargetPriority::Pheromone;
-				distance_to_goal = cell.pheromone_distance;
+				distance_to_goal = cell.food_trail.distance;
 			}
 		}
 		else
 		{
-			const float nest_distance = distance(get_hash_grid_cell_pos(cell.index), nest.pos);
+			const float nest_distance = distance(get_hash_grid_cell_pos(hash_grid_pos), nest.pos);
 			if (nest_distance < nest.get_radius())
 			{
 				priority = TargetPriority::FoodOrNest;
 				distance_to_goal = nest_distance;
 			}
-			else if (hash_grid.get_pheromone(cell) == Pheromone::Nest)
+			else if (hash_grid.is_fresh(cell.nest_trail))
 			{
 				priority = TargetPriority::Pheromone;
-				distance_to_goal = cell.pheromone_distance;
+				distance_to_goal = cell.nest_trail.distance;
 			}
 		}
 		// food and the nest replace each other, pheromones only closer ones
-		const bool is_better = priority > target_priority || (target_slot.hasValue && priority == target_priority && (priority == TargetPriority::FoodOrNest || distance_to_goal < target_distance));
+		const bool is_better = priority > target_priority || (target_hash_grid_pos.hasValue && priority == target_priority && (priority == TargetPriority::FoodOrNest || distance_to_goal < target_distance));
 		if (!is_better) continue;
-		target_slot = slot;
+		target_hash_grid_pos = hash_grid_pos;
 		target_priority = priority;
 		target_distance = distance_to_goal;
 	}
-	if (let slot = target_slot)
+	if (let hash_grid_pos = target_hash_grid_pos)
 	{
 		ant.target_priority = target_priority;
-		ant.target = get_hash_grid_cell_pos(hash_grid.cells[slot].index);
+		ant.target = get_hash_grid_cell_pos(hash_grid_pos);
 	}
 }
 
@@ -150,42 +151,15 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 		{
 			// a pheromone that leads where the ant comes from tells a shorter distance to it
 			const Pheromone trail = ant.has_food != 0 ? Pheromone::Food : Pheromone::Nest;
-			if (hash_grid.get_pheromone(cell) == trail && cell.pheromone_distance < ant.distance_to_poi - 2.0 * HASH_GRID_CELL_LENGTH) ant.distance_to_poi = cell.pheromone_distance;
+			const Trail cell_trail = cell.get_trail(trail);
+			if (hash_grid.is_fresh(cell_trail) && cell_trail.distance < ant.distance_to_poi - 2.0 * HASH_GRID_CELL_LENGTH) ant.distance_to_poi = cell_trail.distance;
 		}
 	}
 	ants[ant_index] = ant;
 }
 
-// the ant leaves its pheromone in the cell, and takes food from it if it carries none
-void update_cell(inout Ant ant, HashGrid hash_grid, uint slot, AntTime ant_time, inout Random rng)
-{
-	HashGridCell cell = hash_grid.cells[slot];
-	const float emit_pheromone_probability = min(ant.pheromone_emit_scale / 10.0, 0.8);
-	// the pheromone that leads where the ant comes from
-	const Pheromone trail = ant.has_food != 0 ? Pheromone::Food : Pheromone::Nest;
-	// an ant emits pheromones more likely the longer it saw none of its own kind
-	const float step_length = ant.has_food != 0 ? 0.5 : 0.2;
-	const float reset_probability = ant.has_food != 0 ? 0.4 : 0.5;
-	if (hash_grid.get_pheromone(cell) == trail && ant_time.chance(rng, step_length, reset_probability)) ant.pheromone_emit_scale = 1.0;
-	else if (ant_time.chance(rng, step_length, 0.5)) ant.pheromone_emit_scale += 1.0;
-	if (ant.has_food == 0 && cell.food_amount > 0)
-	{
-		cell.food_amount--;
-		ant.has_food = 1;
-		ant.target_priority = TargetPriority::None;
-		ant.distance_to_poi = 0.0;
-		ant.pheromone_emit_scale = 2.0;
-	}
-	if (ant_time.chance(rng, 0.4, emit_pheromone_probability))
-	{
-		cell.pheromone = trail;
-		cell.pheromone_time = hash_grid.time;
-		cell.pheromone_distance = ant.distance_to_poi;
-	}
-	hash_grid.cells[slot] = cell;
-	hash_grid.unlock_cell(slot);
-}
-
+// The ant may lay its pheromone in its cell, then takes food from the cell if it carries none. Other ants may update the
+// same cell concurrently; the cell has no lock, since every ant in a cell gets to act each step.
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, 1, 1)]
 void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
@@ -199,14 +173,25 @@ void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	Random rng = Random(ant_index + pc.ant_count * pc.step + 43598763);
 	Ant ant = ants[ant_index];
 	const int2 hash_grid_pos = get_hash_grid_pos(ant.pos);
-	// other ants may hold the cell's lock
-	for (int attempt = 0; attempt < 32; attempt++)
+	const Optional<uint> slot = hash_grid.get_cell(hash_grid_pos);
+
+	const float emit_pheromone_probability = min(ant.pheromone_emit_scale / 10.0, 0.8);
+	// the pheromone that leads where the ant comes from
+	const Pheromone trail = ant.has_food != 0 ? Pheromone::Food : Pheromone::Nest;
+	// an ant emits pheromones more likely the longer it saw none of its own kind
+	const float step_length = ant.has_food != 0 ? 0.5 : 0.2;
+	const float reset_probability = ant.has_food != 0 ? 0.4 : 0.5;
+	const bool on_trail = slot.hasValue && hash_grid.is_fresh(hash_grid.cells[slot.value].get_trail(trail));
+	if (on_trail && ant_time.chance(rng, step_length, reset_probability)) ant.pheromone_emit_scale = 1.0;
+	else if (ant_time.chance(rng, step_length, 0.5)) ant.pheromone_emit_scale += 1.0;
+	if (ant_time.chance(rng, 0.4, emit_pheromone_probability)) hash_grid.lay_pheromone(hash_grid_pos, trail, ant.distance_to_poi);
+
+	if (ant.has_food == 0 && slot.hasValue && hash_grid.take_food(slot.value))
 	{
-		if (let slot = hash_grid.try_acquire_cell(hash_grid_pos))
-		{
-			update_cell(ant, hash_grid, slot, ant_time, rng);
-			break;
-		}
+		ant.has_food = 1;
+		ant.target_priority = TargetPriority::None;
+		ant.distance_to_poi = 0.0;
+		ant.pheromone_emit_scale = 2.0;
 	}
 	ants[ant_index] = ant;
 }
