@@ -2,6 +2,7 @@
 #include <array>
 #include <string>
 #include "imgui.h"
+#include "shared/push_constants.slang"
 #include "backends/imgui_impl_sdl3.h"
 
 UI::UI(vkte::Engine& engine) : ui(engine.get_ui())
@@ -56,7 +57,8 @@ void UI::record_window(vk::CommandBuffer& cb, AppState& app_state)
 	ImGui::Separator();
 
 	ImGui::Text("%.4f ms; FPS: %.2f", app_state.frame_time_ema * 1000, 1.0 / app_state.frame_time_ema);
-	ImGui::Text("total time: %.4f s", app_state.total_time);
+	ImGui::SliderFloat("Speed", &app_state.simulation_speed, 0.0f, 8.0f, "%.2fx");
+	ImGui::Text("simulated time: %.2f s (%u steps)", float(app_state.simulation_step) * SIMULATION_TIME_STEP, app_state.simulation_step);
 	ImGui::Text("simulation: %.4f ms", app_state.device_timings[TIMER_SIMULATION]);
 	ImGui::Text("rendering: %.4f ms", app_state.device_timings[TIMER_RENDERING]);
 	ImGui::PopItemWidth();

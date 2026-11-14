@@ -69,9 +69,7 @@ void WorkContext::update_frame_times(AppState& app_state)
 	{
 		for (int i = 0; i < TIMER_COUNT; i++) app_state.device_timings[i] = engine.get(device_timer_handles[current_frame]).get_result(i);
 		app_state.frame_time = frame_timers[current_frame].restart() / float(vkte::frames_in_flight);
-		app_state.capped_frame_time = std::min(app_state.frame_time, 0.1f);
-		app_state.total_time += app_state.capped_frame_time;
-		const float update_weight = std::clamp(10.0f * app_state.capped_frame_time, 0.0001f, 1.0f);
+		const float update_weight = std::clamp(10.0f * app_state.frame_time, 0.0001f, 1.0f);
 		app_state.frame_time_ema = app_state.frame_time_ema * (1 - update_weight) + app_state.frame_time * update_weight;
 	}
 	else frame_timers[current_frame].restart();
@@ -94,12 +92,25 @@ void WorkContext::record_and_present(AppState& app_state)
 
 	// only once the frame is sure to run, so that a skipped frame doesn't lose the reset
 	const bool reset = std::exchange(app_state.reset_simulation, false);
-	if (reset) app_state.total_time = 0.0f;
+	if (reset)
+	{
+		app_state.simulation_step = 0;
+		unsimulated_time = 0.0f;
+	}
+	// the simulation catches up with the real time by whole steps; a slow frame counts as at most 0.1 s, so that the
+	// simulation slows down instead of taking ever more steps per frame
+	unsimulated_time += std::min(app_state.frame_time, 0.1f) * app_state.simulation_speed;
+	const uint32_t step_count = uint32_t(unsimulated_time / SIMULATION_TIME_STEP);
+	unsimulated_time -= float(step_count) * SIMULATION_TIME_STEP;
+
 	update_uniform_buffer(app_state);
-	const PushConstants pc = simulation.get_push_constants(uniform_buffer_handles[current_frame], app_state.add_food_pos, app_state.add_food_amount);
+	const PushConstants pc = simulation.get_push_constants(uniform_buffer_handles[current_frame], app_state.add_food_pos, app_state.add_food_amount, app_state.simulation_step);
 	vk::CommandBuffer& cb = command.begin(cb_handles[current_frame]);
-	record_simulation(cb, pc, reset);
-	record_rendering(cb, image_idx.value, app_state, pc);
+	record_simulation(cb, pc, reset, step_count);
+	app_state.simulation_step += step_count;
+	PushConstants render_pc = pc;
+	render_pc.step = app_state.simulation_step;
+	record_rendering(cb, image_idx.value, app_state, render_pc);
 	cb.end();
 
 	const vk::SemaphoreSubmitInfo wait_info(image_available, 0, vk::PipelineStageFlagBits2::eColorAttachmentOutput);
@@ -136,19 +147,23 @@ void WorkContext::update_uniform_buffer(AppState& app_state)
 	uniform_buffer_data.range_min = app_state.view.get_min(app_state.window_size);
 	uniform_buffer_data.range_max = app_state.view.get_max(app_state.window_size);
 	uniform_buffer_data.visualizations = app_state.visualizations;
-	uniform_buffer_data.frame_idx = app_state.total_frames;
-	uniform_buffer_data.frame_time = app_state.capped_frame_time;
-	uniform_buffer_data.total_time = app_state.total_time;
 	engine.get_memory_manager().get_buffer(uniform_buffer_handles[engine.get_current_frame()]).update_data(uniform_buffer_data);
 }
 
-void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset)
+void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset, uint32_t step_count)
 {
 	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[engine.get_current_frame()]);
 	if (reset) simulation.reset(cb);
 	device_timer.reset(cb, TIMER_SIMULATION);
 	device_timer.start(cb, TIMER_SIMULATION, vk::PipelineStageFlagBits2::eComputeShader);
-	simulation.step(cb, pc);
+	// food also while the simulation is paused
+	if (pc.food_amount > 0) simulation.add_food(cb, pc);
+	PushConstants step_pc = pc;
+	for (uint32_t i = 0; i < step_count; i++)
+	{
+		step_pc.step = pc.step + i;
+		simulation.step(cb, step_pc);
+	}
 	device_timer.stop(cb, TIMER_SIMULATION, vk::PipelineStageFlagBits2::eComputeShader);
 	compute_to_graphics_barrier(cb);
 }

@@ -14,11 +14,13 @@ public:
 	const char* name() const override { return "simulation"; }
 	void declare_resources(vkte::ResourceDeclarations& declarations, vkte::MemoryManager& memory_manager, const vkte::FrameSettings& frame_settings) override;
 	void destruct(vkte::MemoryManager& memory_manager) override;
-	// of all pipelines, for a frame that adds food_amount food at food_pos (none if it is 0)
-	PushConstants get_push_constants(vkte::BufferHandle uniform_buffer, glm::vec2 food_pos, int32_t food_amount) const;
+	// of all pipelines, for a frame that adds food_amount food at food_pos (none if it is 0), at the simulation step
+	PushConstants get_push_constants(vkte::BufferHandle uniform_buffer, glm::vec2 food_pos, int32_t food_amount, uint32_t step) const;
 	// records filling the buffers with the simulation's start: no ants yet (they start at the nest), a level 1 nest and empty cells
 	void reset(vk::CommandBuffer& cb);
-	// records adding the food, moving the ants, then letting them mark and take food from the cells
+	// records putting the push constants' food into the cell at its position
+	void add_food(vk::CommandBuffer& cb, const PushConstants& pc);
+	// records the simulation step pc.step: moving the ants, then letting them mark and take food from the cells
 	void step(vk::CommandBuffer& cb, const PushConstants& pc);
 	// records drawing the hash grid and the nest covering the screen, and the ants on top
 	void draw(vk::CommandBuffer& cb, const PushConstants& pc);

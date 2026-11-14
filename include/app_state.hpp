@@ -55,11 +55,11 @@ struct AppState
 	std::array<float, TIMER_COUNT> device_timings{};
 	// the time a frame took
 	float frame_time = 1.0f / 60.0f;
-	// what the simulation advances by per frame, so that a slow frame doesn't make the ants jump
-	float capped_frame_time = 1.0f / 60.0f;
 	float frame_time_ema = 1.0f / 60.0f;
-	// the simulated time, the sum of the capped frame times
-	float total_time = 1.0f / 60.0f;
+	// simulated seconds per real second; 0 pauses the simulation
+	float simulation_speed = 1.0f;
+	// the simulation steps done since the start or the last reset
+	uint32_t simulation_step = 0;
 	// in pixels, the swapchain's
 	glm::ivec2 window_extent = glm::ivec2(1000, 1000);
 	// in window coordinates, which mouse positions are in and which differ from pixels on scaled displays

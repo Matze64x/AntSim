@@ -51,7 +51,7 @@ float4 fragment_main(ScreenVertex input) : SV_Target
 	{
 		return ub.visualizations.nest.get_color(nest.get_level_progress());
 	}
-	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, ub.total_time);
+	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, float(pc.step) * SIMULATION_TIME_STEP);
 	const Optional<uint> slot = hash_grid.get_cell(get_hash_grid_pos(pos));
 	if (!slot.hasValue) return float4(0.0, 0.0, 0.0, 1.0);
 	const HashGridCell cell = hash_grid.cells[slot.value];

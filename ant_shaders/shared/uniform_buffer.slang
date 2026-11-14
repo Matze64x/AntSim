@@ -38,7 +38,4 @@ struct UniformBufferData
 	float2 range_min;
 	float2 range_max;
 	Visualizations visualizations;
-	uint32_t frame_idx;
-	float frame_time;
-	float total_time;
 };

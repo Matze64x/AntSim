@@ -40,10 +40,12 @@ private:
 	std::array<Timer, vkte::frames_in_flight> frame_timers;
 	std::array<vkte::BufferHandle, vkte::frames_in_flight> uniform_buffer_handles;
 	UniformBufferData uniform_buffer_data{};
+	// the real time, times the simulation speed, that the simulation hasn't caught up with yet; less than a step
+	float unsimulated_time = 0.0f;
 
 	void update_uniform_buffer(AppState& app_state);
 	void update_frame_times(AppState& app_state);
 	void record_and_present(AppState& app_state);
-	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset);
+	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset, uint32_t step_count);
 	void record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, AppState& app_state, const PushConstants& pc);
 };

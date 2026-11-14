@@ -64,7 +64,7 @@ void Simulation::destruct(vkte::MemoryManager& memory_manager)
 	}
 }
 
-PushConstants Simulation::get_push_constants(vkte::BufferHandle uniform_buffer, glm::vec2 food_pos, int32_t food_amount) const
+PushConstants Simulation::get_push_constants(vkte::BufferHandle uniform_buffer, glm::vec2 food_pos, int32_t food_amount, uint32_t step) const
 {
 	PushConstants pc{};
 	pc.ants = ants_buffer;
@@ -75,6 +75,7 @@ PushConstants Simulation::get_push_constants(vkte::BufferHandle uniform_buffer, 
 	pc.hash_grid_capacity = hash_grid_capacity;
 	pc.food_pos = food_pos;
 	pc.food_amount = food_amount;
+	pc.step = step;
 	return pc;
 }
 
@@ -94,20 +95,22 @@ void Simulation::bind(vk::CommandBuffer& cb, vkte::PipelineHandle pipeline, cons
 	cb.pushConstants(engine.get_pipeline_layout(pipeline), stages, 0, sizeof(pc), &pc);
 }
 
+void Simulation::add_food(vk::CommandBuffer& cb, const PushConstants& pc)
+{
+	bind(cb, add_food_pipeline, pc, vk::ShaderStageFlagBits::eCompute);
+	cb.dispatch(1, 1, 1);
+	compute_to_compute_barrier(cb);
+}
+
 void Simulation::step(vk::CommandBuffer& cb, const PushConstants& pc)
 {
 	const uint32_t ant_group_count = (ant_count + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
-	if (pc.food_amount > 0)
-	{
-		bind(cb, add_food_pipeline, pc, vk::ShaderStageFlagBits::eCompute);
-		cb.dispatch(1, 1, 1);
-		compute_to_compute_barrier(cb);
-	}
 	bind(cb, step_ants_pipeline, pc, vk::ShaderStageFlagBits::eCompute);
 	cb.dispatch(ant_group_count, 1, 1);
 	compute_to_compute_barrier(cb);
 	bind(cb, update_hash_grid_pipeline, pc, vk::ShaderStageFlagBits::eCompute);
 	cb.dispatch(ant_group_count, 1, 1);
+	compute_to_compute_barrier(cb);
 }
 
 void Simulation::draw(vk::CommandBuffer& cb, const PushConstants& pc)
