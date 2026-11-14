@@ -22,6 +22,6 @@ struct AntTime
 	// whether an interval passed and, with the probability, something happens in it
 	bool chance(inout Random rng, float interval_length, float probability)
 	{
-		return interval_passed(interval_length) && rng.next_float() < probability;
+		return interval_passed(interval_length) && rng.get_float() < probability;
 	}
 }

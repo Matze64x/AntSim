@@ -30,7 +30,7 @@ void look_for_target(inout Ant ant, HashGrid hash_grid, Nest nest, AntTime ant_t
 	// cells at random positions within the search radius (a cell may be sampled more than once)
 	for (int i = 0; i < TARGET_SEARCH_SAMPLE_COUNT; i++)
 	{
-		const int2 offset = int2(round(rng.next_float2_in_disk() * (ANT_SEARCH_RADIUS / HASH_GRID_CELL_LENGTH)));
+		const int2 offset = int2(round(rng.get_float2_in_disk() * (ANT_SEARCH_RADIUS / HASH_GRID_CELL_LENGTH)));
 		// skip the cell in which the ant currently is
 		if (all(offset == 0)) continue;
 		const Optional<uint> slot = hash_grid.get_cell(ant_hash_grid_pos + offset);
@@ -109,20 +109,20 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	// an ant without a target wanders to a random point nearby
 	if (ant.target_priority == TargetPriority::None)
 	{
-		ant.target = ant.pos + rng.next_float2(-ANT_SEARCH_RADIUS, ANT_SEARCH_RADIUS);
+		ant.target = ant.pos + rng.get_float2(-ANT_SEARCH_RADIUS, ANT_SEARCH_RADIUS);
 		ant.target_priority = TargetPriority::Wander;
 	}
 	// an ant that reached its target wanders on in about the direction it went
 	if (distance(ant.pos, ant.target) < (HASH_GRID_CELL_LENGTH / 2.0))
 	{
 		const float max_angle = radians(10.0);
-		const float angle = rng.next_float(-max_angle, max_angle);
+		const float angle = rng.get_float(-max_angle, max_angle);
 		const float2x2 rotation = float2x2(cos(angle), -sin(angle), sin(angle), cos(angle));
-		const float target_distance = rng.next_float(ANT_SEARCH_RADIUS / 2.0, ANT_SEARCH_RADIUS);
+		const float target_distance = rng.get_float(ANT_SEARCH_RADIUS / 2.0, ANT_SEARCH_RADIUS);
 		ant.target = ant.pos + mul(rotation, normalize(ant.dir)) * target_distance;
 		ant.target_priority = TargetPriority::Wander;
 	}
-	ant.dir = normalize(ant.target - ant.pos + rng.next_float2(-0.01, 0.01)) * ANT_SPEED;
+	ant.dir = normalize(ant.target - ant.pos + rng.get_float2(-0.01, 0.01)) * ANT_SPEED;
 	ant.pos += ant.dir * SIMULATION_TIME_STEP;
 	ant.distance_to_poi += ANT_SPEED * SIMULATION_TIME_STEP;
 
