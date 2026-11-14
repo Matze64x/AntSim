@@ -1,4 +1,3 @@
-import include.ant;
 import include.hash_grid;
 import include.nest;
 import include.random;
@@ -12,72 +11,69 @@ import vkte;
 [[vk::push_constant]]
 ConstantBuffer<PushConstants> pc;
 
+// Ants walk with a heading that drifts randomly; ants that carry no food steer toward the strongest smell of food and
+// food trail ahead, and ants that carry food steer toward where they believe the nest is, laying the food trail.
+
+// in meters per second
 static const float ANT_SPEED = 0.2;
-static const float ANT_SEARCH_RADIUS = 0.2;
-// the cells an ant looks at per frame for a better target
-static const int TARGET_SEARCH_SAMPLE_COUNT = 32;
+// how fast the heading drifts randomly, in radians per square root of a second (a random walk of the heading)
+static const float WANDER_STRENGTH = 2.0;
+// how fast an ant turns toward a smell or the nest, in radians per second
+static const float TURN_RATE = 6.0;
+// an ant's antennae smell to the left and the right of its heading at this angle, and straight ahead
+static const float ANTENNA_ANGLE = radians(40.0);
+// how far ahead of the ant its antennae smell, in meters
+static const float ANTENNA_LENGTH = 0.1;
+// the error that path integration adds, in meters per square root of a meter walked (a random walk of the estimate)
+static const float PATH_INTEGRATION_ERROR = 0.03;
+// how far beyond the nest's edge ants smell the nest, in meters, which corrects their estimate of where it is
+static const float NEST_SCENT_DISTANCE = 0.2;
+// food smells stronger than any trail around an antenna, so that ants on a trail turn to food next to it
+static const float FOOD_SCENT = 10.0;
 // how far ants may go from the origin along each axis
 static const float WORLD_BOUND = 100.0;
 
-// Samples cells around the ant for a better target than the one it has: food if it carries none, else the nest, or the
-// closest pheromone that leads there.
-void look_for_target(inout Ant ant, HashGrid hash_grid, Nest nest, AntTime ant_time, inout Random rng)
+float2 rotate(float2 v, float angle)
 {
-	const int2 ant_hash_grid_pos = get_hash_grid_pos(ant.pos);
-	Optional<int2> target_hash_grid_pos = none;
-	TargetPriority target_priority = ant.target_priority;
-	float target_distance = float.maxValue;
-	// cells at random positions within the search radius (a cell may be sampled more than once)
-	for (int i = 0; i < TARGET_SEARCH_SAMPLE_COUNT; i++)
+	return mul(float2x2(cos(angle), -sin(angle), sin(angle), cos(angle)), v);
+}
+
+// The smell of food and food trail around a point: of the cells around the point's cell, food or the trail's freshness.
+// Fresher trails smell stronger.
+float smell(HashGrid hash_grid, float2 pos)
+{
+	const int2 center = get_hash_grid_pos(pos);
+	float strength = 0.0;
+	for (int y = -1; y <= 1; y++)
 	{
-		const int2 offset = int2(round(rng.get_float2_in_disk() * (ANT_SEARCH_RADIUS / HASH_GRID_CELL_LENGTH)));
-		// skip the cell in which the ant currently is
-		if (all(offset == 0)) continue;
-		const int2 hash_grid_pos = ant_hash_grid_pos + offset;
-		const Optional<uint> slot = hash_grid.get_cell(hash_grid_pos);
-		if (!slot.hasValue) continue;
-		const HashGridCell cell = hash_grid.cells[slot.value];
-		TargetPriority priority = TargetPriority::None;
-		float distance_to_goal = float.maxValue;
-		if (ant.has_food == 0)
+		for (int x = -1; x <= 1; x++)
 		{
-			if (cell.food_amount > 0 && ant_time.chance(rng, 0.1, 0.95))
+			if (let slot = hash_grid.get_cell(center + int2(x, y)))
 			{
-				priority = TargetPriority::FoodOrNest;
-				distance_to_goal = 0.0;
-			}
-			else if (hash_grid.is_fresh(cell.food_trail))
-			{
-				priority = TargetPriority::Pheromone;
-				distance_to_goal = cell.food_trail.distance;
+				const HashGridCell cell = hash_grid.cells[slot];
+				strength += cell.food_amount > 0 ? FOOD_SCENT : hash_grid.get_food_trail_freshness(cell);
 			}
 		}
-		else
-		{
-			const float nest_distance = distance(get_hash_grid_cell_pos(hash_grid_pos), nest.pos);
-			if (nest_distance < nest.get_radius())
-			{
-				priority = TargetPriority::FoodOrNest;
-				distance_to_goal = nest_distance;
-			}
-			else if (hash_grid.is_fresh(cell.nest_trail))
-			{
-				priority = TargetPriority::Pheromone;
-				distance_to_goal = cell.nest_trail.distance;
-			}
-		}
-		// food and the nest replace each other, pheromones only closer ones
-		const bool is_better = priority > target_priority || (target_hash_grid_pos.hasValue && priority == target_priority && (priority == TargetPriority::FoodOrNest || distance_to_goal < target_distance));
-		if (!is_better) continue;
-		target_hash_grid_pos = hash_grid_pos;
-		target_priority = priority;
-		target_distance = distance_to_goal;
 	}
-	if (let hash_grid_pos = target_hash_grid_pos)
-	{
-		ant.target_priority = target_priority;
-		ant.target = get_hash_grid_cell_pos(hash_grid_pos);
-	}
+	return strength;
+}
+
+// the turn, at most max_turn either way, toward the stronger smell of the antennae, none if straight ahead smells strongest
+float turn_to_smell(Ant ant, HashGrid hash_grid, float max_turn)
+{
+	const float left = smell(hash_grid, ant.pos + rotate(ant.dir, ANTENNA_ANGLE) * ANTENNA_LENGTH);
+	const float ahead = smell(hash_grid, ant.pos + ant.dir * ANTENNA_LENGTH);
+	const float right = smell(hash_grid, ant.pos + rotate(ant.dir, -ANTENNA_ANGLE) * ANTENNA_LENGTH);
+	if (ahead >= left && ahead >= right) return 0.0;
+	return left > right ? max_turn : -max_turn;
+}
+
+// the turn, at most max_turn either way, toward a point
+float turn_to(Ant ant, float2 point, float max_turn)
+{
+	const float2 to_point = point - ant.pos;
+	const float angle = atan2(ant.dir.x * to_point.y - ant.dir.y * to_point.x, dot(ant.dir, to_point));
+	return clamp(angle, -max_turn, max_turn);
 }
 
 // The ant puts down its food, and the nest grows to the level of its food. The level follows from the food that this
@@ -96,102 +92,68 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 {
 	const uint ant_index = dispatch_thread_id.x;
 	if (ant_index >= pc.ant_count) return;
-	const float time = float(pc.step) * SIMULATION_TIME_STEP;
 	vkte::Buffer<Ant> ants = vkte::get_buffer<Ant>(pc.ants);
 	Nest* nest_pointer = vkte::get_buffer<Nest>(pc.nest).get_pointer();
 	const Nest nest = nest_pointer[0];
-	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, time);
-	const AntTime ant_time = AntTime(time, ant_index, pc.ant_count, 0.7982);
+	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, float(pc.step) * SIMULATION_TIME_STEP);
 	Random rng = Random(ant_index + pc.ant_count * pc.step + 27349843);
 	Ant ant = ants[ant_index];
-	// now and then, the ant looks for a new target
-	if (ant_time.chance(rng, 0.1, 0.05)) ant.target_priority = TargetPriority::None;
-	look_for_target(ant, hash_grid, nest, ant_time, rng);
-	// an ant without a target wanders to a random point nearby
-	if (ant.target_priority == TargetPriority::None)
+	// a new ant leaves the nest in a random direction
+	if (all(ant.dir == 0.0))
 	{
-		ant.target = ant.pos + rng.get_float2(-ANT_SEARCH_RADIUS, ANT_SEARCH_RADIUS);
-		ant.target_priority = TargetPriority::Wander;
+		ant.dir = rotate(float2(1.0, 0.0), rng.get_float(0.0, 2.0 * float.getPi()));
+		ant.nest_estimate = nest.pos;
 	}
-	// an ant that reached its target wanders on in about the direction it went
-	if (distance(ant.pos, ant.target) < (HASH_GRID_CELL_LENGTH / 2.0))
-	{
-		const float max_angle = radians(10.0);
-		const float angle = rng.get_float(-max_angle, max_angle);
-		const float2x2 rotation = float2x2(cos(angle), -sin(angle), sin(angle), cos(angle));
-		const float target_distance = rng.get_float(ANT_SEARCH_RADIUS / 2.0, ANT_SEARCH_RADIUS);
-		ant.target = ant.pos + mul(rotation, normalize(ant.dir)) * target_distance;
-		ant.target_priority = TargetPriority::Wander;
-	}
-	ant.dir = normalize(ant.target - ant.pos + rng.get_float2(-0.01, 0.01)) * ANT_SPEED;
-	ant.pos += ant.dir * SIMULATION_TIME_STEP;
-	ant.distance_to_poi += ANT_SPEED * SIMULATION_TIME_STEP;
+
+	const float max_turn = TURN_RATE * SIMULATION_TIME_STEP;
+	float turn = rng.get_float(-1.0, 1.0) * WANDER_STRENGTH * sqrt(SIMULATION_TIME_STEP);
+	turn += ant.has_food != 0 ? turn_to(ant, ant.nest_estimate, max_turn) : turn_to_smell(ant, hash_grid, max_turn);
+	ant.dir = normalize(rotate(ant.dir, turn));
+	const float step_length = ANT_SPEED * SIMULATION_TIME_STEP;
+	ant.pos += ant.dir * step_length;
+	ant.nest_estimate += rng.get_float2_in_disk() * PATH_INTEGRATION_ERROR * sqrt(step_length);
 
 	// an ant at the world's bound turns back
 	const float2 bounded_pos = clamp(ant.pos, -WORLD_BOUND, WORLD_BOUND);
-	ant.dir = select(bounded_pos != ant.pos, -ant.dir * 0.1, ant.dir);
+	if (any(bounded_pos != ant.pos)) ant.dir = -ant.dir;
 	ant.pos = bounded_pos;
 
-	if (let slot = hash_grid.get_cell(get_hash_grid_pos(ant.pos)))
+	const float nest_distance = distance(ant.pos, nest.pos);
+	if (nest_distance < nest.get_radius() + NEST_SCENT_DISTANCE) ant.nest_estimate = nest.pos;
+	// an ant that brought food home turns back to where it found it
+	if (nest_distance < nest.get_radius() && ant.has_food != 0)
 	{
-		const HashGridCell cell = hash_grid.cells[slot];
-		const float ant_nest_distance = distance(ant.pos, nest.pos);
-		if (ant_nest_distance < nest.get_radius())
-		{
-			ant.distance_to_poi = ant_nest_distance;
-			if (ant.has_food != 0)
-			{
-				ant.has_food = 0;
-				ant.target_priority = TargetPriority::None;
-				ant.pheromone_emit_scale = 2.0;
-				deliver_food(nest_pointer);
-			}
-		}
-		else
-		{
-			// a pheromone that leads where the ant comes from tells a shorter distance to it
-			const Pheromone trail = ant.has_food != 0 ? Pheromone::Food : Pheromone::Nest;
-			const Trail cell_trail = cell.get_trail(trail);
-			if (hash_grid.is_fresh(cell_trail) && cell_trail.distance < ant.distance_to_poi - 2.0 * HASH_GRID_CELL_LENGTH) ant.distance_to_poi = cell_trail.distance;
-		}
+		ant.has_food = 0;
+		ant.dir = -ant.dir;
+		deliver_food(nest_pointer);
 	}
 	ants[ant_index] = ant;
 }
 
-// The ant may lay its pheromone in its cell, then takes food from the cell if it carries none. Other ants may update the
-// same cell concurrently; the cell has no lock, since every ant in a cell gets to act each step.
+// An ant carrying food lays the food trail in its cell; an ant carrying none takes food from its cell if it has any and
+// turns back home. Other ants may update the same cell concurrently; cells have no locks, since every ant in a cell gets
+// to act each step.
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, 1, 1)]
 void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 {
 	const uint ant_index = dispatch_thread_id.x;
 	if (ant_index >= pc.ant_count) return;
-	const float time = float(pc.step) * SIMULATION_TIME_STEP;
 	vkte::Buffer<Ant> ants = vkte::get_buffer<Ant>(pc.ants);
-	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, time);
-	const AntTime ant_time = AntTime(time, ant_index, pc.ant_count, 0.271);
-	Random rng = Random(ant_index + pc.ant_count * pc.step + 43598763);
+	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, float(pc.step) * SIMULATION_TIME_STEP);
 	Ant ant = ants[ant_index];
 	const int2 hash_grid_pos = get_hash_grid_pos(ant.pos);
-	const Optional<uint> slot = hash_grid.get_cell(hash_grid_pos);
-
-	const float emit_pheromone_probability = min(ant.pheromone_emit_scale / 10.0, 0.8);
-	// the pheromone that leads where the ant comes from
-	const Pheromone trail = ant.has_food != 0 ? Pheromone::Food : Pheromone::Nest;
-	// an ant emits pheromones more likely the longer it saw none of its own kind
-	const float step_length = ant.has_food != 0 ? 0.5 : 0.2;
-	const float reset_probability = ant.has_food != 0 ? 0.4 : 0.5;
-	const bool on_trail = slot.hasValue && hash_grid.is_fresh(hash_grid.cells[slot.value].get_trail(trail));
-	if (on_trail && ant_time.chance(rng, step_length, reset_probability)) ant.pheromone_emit_scale = 1.0;
-	else if (ant_time.chance(rng, step_length, 0.5)) ant.pheromone_emit_scale += 1.0;
-	if (ant_time.chance(rng, 0.4, emit_pheromone_probability)) hash_grid.lay_pheromone(hash_grid_pos, trail, ant.distance_to_poi);
-
-	if (ant.has_food == 0 && slot.hasValue && hash_grid.take_food(slot.value))
+	if (ant.has_food != 0)
 	{
-		ant.has_food = 1;
-		ant.target_priority = TargetPriority::None;
-		ant.distance_to_poi = 0.0;
-		ant.pheromone_emit_scale = 2.0;
+		hash_grid.lay_food_trail(hash_grid_pos);
+	}
+	else if (let slot = hash_grid.get_cell(hash_grid_pos))
+	{
+		if (hash_grid.take_food(slot))
+		{
+			ant.has_food = 1;
+			ant.dir = -ant.dir;
+		}
 	}
 	ants[ant_index] = ant;
 }

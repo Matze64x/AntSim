@@ -45,9 +45,8 @@ void UI::record_window(vk::CommandBuffer& cb, AppState& app_state)
 	ImGui::PushItemWidth(200.0f);
 	ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "Visualization");
 	visualization_controls("Food", app_state.visualizations.food);
-	visualization_controls("Food Pheromone", app_state.visualizations.food_pheromone);
+	visualization_controls("Food Trail", app_state.visualizations.food_trail);
 	visualization_controls("Nest", app_state.visualizations.nest);
-	visualization_controls("Nest Pheromone", app_state.visualizations.nest_pheromone);
 	ImGui::Text("Ants Colors");
 	ImGui::ColorEdit3("Without Food", &app_state.visualizations.ant_wo_food_color.x);
 	ImGui::ColorEdit3("Without Food Direction Marker", &app_state.visualizations.ant_wo_food_dir_color.x);

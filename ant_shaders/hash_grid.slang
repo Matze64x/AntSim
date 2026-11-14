@@ -11,7 +11,7 @@ import vkte;
 ConstantBuffer<PushConstants> pc;
 
 // Puts the push constants' food into the cell at its position, taking the slot from whatever cell had it, whose
-// pheromones it clears. A single thread, since it writes one cell.
+// trail it clears. A single thread, since it writes one cell.
 [shader("compute")]
 [numthreads(1, 1, 1)]
 void add_food()
@@ -23,8 +23,7 @@ void add_food()
 	if (cell.key != key)
 	{
 		cell.key = key;
-		cell.nest_trail.expiry_time = 0.0;
-		cell.food_trail.expiry_time = 0.0;
+		cell.food_trail_expiry_time = 0.0;
 	}
 	cell.food_amount = pc.food_amount;
 }
@@ -61,7 +60,6 @@ float4 fragment_main(ScreenVertex input) : SV_Target
 	if (!slot.hasValue) return float4(0.0, 0.0, 0.0, 1.0);
 	const HashGridCell cell = hash_grid.cells[slot.value];
 	if (cell.food_amount > 0 && ub.visualizations.food.is_shown()) return ub.visualizations.food.get_color(float(cell.food_amount) / 255.0);
-	if (hash_grid.is_fresh(cell.food_trail) && ub.visualizations.food_pheromone.is_shown()) return ub.visualizations.food_pheromone.get_color(hash_grid.get_freshness(cell.food_trail));
-	if (hash_grid.is_fresh(cell.nest_trail) && ub.visualizations.nest_pheromone.is_shown()) return ub.visualizations.nest_pheromone.get_color(hash_grid.get_freshness(cell.nest_trail));
+	if (hash_grid.has_food_trail(cell) && ub.visualizations.food_trail.is_shown()) return ub.visualizations.food_trail.get_color(hash_grid.get_food_trail_freshness(cell));
 	return float4(0.0, 0.0, 0.0, 1.0);
 }

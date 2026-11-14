@@ -1,28 +1,14 @@
 #pragma once
 #include "shared/common.slang"
 
-// how much an ant wants to reach its target; a target is only replaced by one of a higher priority
-enum class TargetPriority : uint32_t
-{
-	// the ant needs a new target
-	None,
-	// a random target near the ant
-	Wander,
-	// a cell with the pheromone that leads where the ant wants to go
-	Pheromone,
-	// food if the ant carries none, else the nest
-	FoodOrNest
-};
-
 struct Ant
 {
 	float2 pos;
+	// the unit vector the ant walks along; (0, 0) for an ant that hasn't walked yet, which then picks a random one
 	float2 dir;
-	float2 target;
-	float distance_to_poi;
-	// track how many other pheromones the ant sees to increase probability of emitting one
-	float pheromone_emit_scale;
-	TargetPriority target_priority;
+	// Where the ant believes the nest is. Like real ants, it adds up the way it walked (path integration), with an
+	// error that grows the farther it walks, until it smells the nest.
+	float2 nest_estimate;
 	// 0 or 1, since a bool's size differs between Slang's and C++'s buffers
 	uint32_t has_food;
 };

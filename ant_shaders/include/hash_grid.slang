@@ -29,16 +29,8 @@ uint get_hash_grid_key(int2 index)
 	return (uint(index.x) & 0xffffu) | (uint(index.y) << 16u);
 }
 
-extension HashGridCell
-{
-	Trail get_trail(Pheromone pheromone)
-	{
-		return pheromone == Pheromone::Food ? food_trail : nest_trail;
-	}
-}
-
 // The hash grid's cells, through a pointer, so that writing a member writes only that member. Each grid position has
-// one slot; a cell holds its position's data while it is alive, has food or a pheromone that hasn't expired. A slot whose
+// one slot; a cell holds its position's data while it is alive, has food or a food trail that hasn't expired. A slot whose
 // cell isn't alive is free for any position, and a position whose slot holds another position's living cell is
 // wasteland, where nothing can be laid.
 struct HashGrid
@@ -48,20 +40,20 @@ struct HashGrid
 	// the simulated time, which pheromones expire by
 	float time;
 
-	bool is_fresh(Trail trail)
+	bool has_food_trail(HashGridCell cell)
 	{
-		return time < trail.expiry_time;
+		return time < cell.food_trail_expiry_time;
 	}
 
-	// 1 when the pheromone was just laid, 0 when it expires
-	float get_freshness(Trail trail)
+	// 1 when the trail was just laid, 0 when it expires (or expired)
+	float get_food_trail_freshness(HashGridCell cell)
 	{
-		return (trail.expiry_time - time) / PHEROMONE_LIFETIME;
+		return max((cell.food_trail_expiry_time - time) / PHEROMONE_LIFETIME, 0.0);
 	}
 
 	bool is_alive(HashGridCell cell)
 	{
-		return cell.food_amount > 0 || is_fresh(cell.nest_trail) || is_fresh(cell.food_trail);
+		return cell.food_amount > 0 || has_food_trail(cell);
 	}
 
 	uint get_slot(int2 index)
@@ -78,7 +70,7 @@ struct HashGrid
 	}
 
 	// The slot of the index's cell, which takes the slot if its cell isn't alive; none if the index is wasteland. A cell
-	// that isn't alive has neither food nor a fresh pheromone, so taking it needs no clearing.
+	// that isn't alive has neither food nor a food trail, so taking it needs no clearing.
 	Optional<uint> claim_cell(int2 index)
 	{
 		const uint slot = get_slot(index);
@@ -93,15 +85,10 @@ struct HashGrid
 		return none;
 	}
 
-	// lays the pheromone in the index's cell unless the index is wasteland
-	void lay_pheromone(int2 index, Pheromone pheromone, float distance)
+	// lays the food trail in the index's cell unless the index is wasteland
+	void lay_food_trail(int2 index)
 	{
-		if (let slot = claim_cell(index))
-		{
-			Trail* trail = pheromone == Pheromone::Food ? &cells[slot].food_trail : &cells[slot].nest_trail;
-			trail.expiry_time = time + PHEROMONE_LIFETIME;
-			trail.distance = distance;
-		}
+		if (let slot = claim_cell(index)) cells[slot].food_trail_expiry_time = time + PHEROMONE_LIFETIME;
 	}
 
 	// takes one food from the slot's cell if it has any left

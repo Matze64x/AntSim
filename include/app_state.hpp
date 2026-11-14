@@ -16,10 +16,8 @@ inline Visualizations get_default_visualizations()
 	Visualizations visualizations;
 	visualizations.food = Visualization{.color = glm::vec3(0.0f), .color_map = ColorMap::Viridis};
 	// dark cyan
-	visualizations.food_pheromone = Visualization{.color = glm::vec3(0.0f, 0.4f, 0.4f), .color_map = ColorMap::CustomColor};
+	visualizations.food_trail = Visualization{.color = glm::vec3(0.0f, 0.4f, 0.4f), .color_map = ColorMap::CustomColor};
 	visualizations.nest = Visualization{.color = glm::vec3(0.0f), .color_map = ColorMap::Plasma};
-	// dark blue
-	visualizations.nest_pheromone = Visualization{.color = glm::vec3(0.0f, 0.0f, 0.4f), .color_map = ColorMap::CustomColor};
 	// blue with a pink leading edge
 	visualizations.ant_wo_food_color = glm::vec3(0.0f, 0.0f, 1.0f);
 	visualizations.ant_wo_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
