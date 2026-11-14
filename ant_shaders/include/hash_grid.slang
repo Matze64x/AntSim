@@ -1,4 +1,5 @@
 import shared.hash_grid;
+import shared.push_constants;
 
 int2 get_hash_grid_pos(float2 position)
 {
@@ -29,6 +30,25 @@ uint get_hash_grid_key(int2 index)
 	return (uint(index.x) & 0xffffu) | (uint(index.y) << 16u);
 }
 
+// how much a food trail fades in the seconds
+float get_food_trail_fade(float seconds)
+{
+	return exp2(-seconds / FOOD_TRAIL_HALF_LIFE);
+}
+
+// A compare-exchange loop, since not every GPU has float atomic adds (the Intel Iris Xe hasn't).
+void atomic_add(float* value, float addend)
+{
+	Atomic<uint32_t>* bits = (Atomic<uint32_t>*)value;
+	uint expected = bits.load();
+	while (true)
+	{
+		const uint previous = bits.compareExchange(expected, asuint(asfloat(expected) + addend));
+		if (previous == expected) return;
+		expected = previous;
+	}
+}
+
 // The hash grid's cells, through a pointer, so that writing a member writes only that member. Each grid position has
 // one slot; a cell holds its position's data while it is alive, has food or a food trail that hasn't expired. A slot whose
 // cell isn't alive is free for any position, and a position whose slot holds another position's living cell is
@@ -37,18 +57,25 @@ struct HashGrid
 {
 	HashGridCell* cells;
 	uint capacity;
-	// the simulated time, which pheromones expire by
-	float time;
+	// how much a food trail faded since the current trail epoch started, which turns the stored trails into current ones
+	float fade;
+
+	// of the simulation step
+	__init(HashGridCell* cells, uint capacity, uint step)
+	{
+		this.cells = cells;
+		this.capacity = capacity;
+		fade = get_food_trail_fade(float(step % FOOD_TRAIL_EPOCH_STEP_COUNT) * SIMULATION_TIME_STEP);
+	}
+
+	float get_food_trail(HashGridCell cell)
+	{
+		return cell.food_trail * fade;
+	}
 
 	bool has_food_trail(HashGridCell cell)
 	{
-		return time < cell.food_trail_expiry_time;
-	}
-
-	// 1 when the trail was just laid, 0 when it expires (or expired)
-	float get_food_trail_freshness(HashGridCell cell)
-	{
-		return max((cell.food_trail_expiry_time - time) / PHEROMONE_LIFETIME, 0.0);
+		return get_food_trail(cell) >= MIN_FOOD_TRAIL;
 	}
 
 	bool is_alive(HashGridCell cell)
@@ -70,7 +97,7 @@ struct HashGrid
 	}
 
 	// The slot of the index's cell, which takes the slot if its cell isn't alive; none if the index is wasteland. A cell
-	// that isn't alive has neither food nor a food trail, so taking it needs no clearing.
+	// that isn't alive has no food and at most a trail too faint to smell, which the new index may as well keep.
 	Optional<uint> claim_cell(int2 index)
 	{
 		const uint slot = get_slot(index);
@@ -85,10 +112,11 @@ struct HashGrid
 		return none;
 	}
 
-	// lays the food trail in the index's cell unless the index is wasteland
-	void lay_food_trail(int2 index)
+	// adds to the food trail in the index's cell unless the index is wasteland
+	void lay_food_trail(int2 index, float amount)
 	{
-		if (let slot = claim_cell(index)) cells[slot].food_trail_expiry_time = time + PHEROMONE_LIFETIME;
+		const Optional<uint> slot = claim_cell(index);
+		if (slot.hasValue) atomic_add(&cells[slot.value].food_trail, amount / fade);
 	}
 
 	// takes one food from the slot's cell if it has any left

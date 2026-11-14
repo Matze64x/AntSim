@@ -51,6 +51,7 @@ void Simulation::declare_resources(vkte::ResourceDeclarations& declarations, vkt
 	add_food_pipeline = add_compute_pipeline(declarations, "hash_grid.slang", "add_food");
 	step_ants_pipeline = add_compute_pipeline(declarations, "ants.slang", "step_ants");
 	update_hash_grid_pipeline = add_compute_pipeline(declarations, "ants.slang", "update_hash_grid");
+	fade_food_trails_pipeline = add_compute_pipeline(declarations, "hash_grid.slang", "fade_food_trails");
 	hash_grid_render_pipeline = add_render_pipeline(declarations, frame_settings, "hash_grid.slang");
 	ants_render_pipeline = add_render_pipeline(declarations, frame_settings, "ants.slang");
 }
@@ -111,6 +112,13 @@ void Simulation::step(vk::CommandBuffer& cb, const PushConstants& pc)
 	bind(cb, update_hash_grid_pipeline, pc, vk::ShaderStageFlagBits::eCompute);
 	cb.dispatch(ant_group_count, 1, 1);
 	compute_to_compute_barrier(cb);
+	// after a trail epoch's last step
+	if ((pc.step + 1) % FOOD_TRAIL_EPOCH_STEP_COUNT == 0)
+	{
+		bind(cb, fade_food_trails_pipeline, pc, vk::ShaderStageFlagBits::eCompute);
+		cb.dispatch((hash_grid_capacity + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE, 1, 1);
+		compute_to_compute_barrier(cb);
+	}
 }
 
 void Simulation::draw(vk::CommandBuffer& cb, const PushConstants& pc)

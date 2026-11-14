@@ -11,8 +11,9 @@ import vkte;
 [[vk::push_constant]]
 ConstantBuffer<PushConstants> pc;
 
-// Ants walk with a heading that drifts randomly; ants that carry no food steer toward the strongest smell of food and
-// food trail ahead, and ants that carry food steer toward where they believe the nest is, laying the food trail.
+// Ants walk with a heading that drifts randomly; ants that carry no food steer toward the strongest smell of food or food
+// trail ahead, and ants that carry food steer toward where they believe the nest is, laying the food trail. Since busy
+// trails grow stronger and unused ones fade, the colony converges on short ones.
 
 // in meters per second
 static const float ANT_SPEED = 0.2;
@@ -28,8 +29,6 @@ static const float ANTENNA_LENGTH = 0.1;
 static const float PATH_INTEGRATION_ERROR = 0.03;
 // how far beyond the nest's edge ants smell the nest, in meters, which corrects their estimate of where it is
 static const float NEST_SCENT_DISTANCE = 0.2;
-// food smells stronger than any trail around an antenna, so that ants on a trail turn to food next to it
-static const float FOOD_SCENT = 10.0;
 // how far ants may go from the origin along each axis
 static const float WORLD_BOUND = 100.0;
 
@@ -38,34 +37,48 @@ float2 rotate(float2 v, float angle)
 	return mul(float2x2(cos(angle), -sin(angle), sin(angle), cos(angle)), v);
 }
 
-// The smell of food and food trail around a point: of the cells around the point's cell, food or the trail's freshness.
-// Fresher trails smell stronger.
-float smell(HashGrid hash_grid, float2 pos)
+// what an antenna smells in the cells around a point
+struct Smell
 {
-	const int2 center = get_hash_grid_pos(pos);
-	float strength = 0.0;
-	for (int y = -1; y <= 1; y++)
+	// the cells with food
+	uint food_cell_count;
+	float food_trail;
+
+	__init(HashGrid hash_grid, float2 pos)
 	{
-		for (int x = -1; x <= 1; x++)
+		food_cell_count = 0;
+		food_trail = 0.0;
+		const int2 center = get_hash_grid_pos(pos);
+		for (int y = -1; y <= 1; y++)
 		{
-			if (let slot = hash_grid.get_cell(center + int2(x, y)))
+			for (int x = -1; x <= 1; x++)
 			{
-				const HashGridCell cell = hash_grid.cells[slot];
-				strength += cell.food_amount > 0 ? FOOD_SCENT : hash_grid.get_food_trail_freshness(cell);
+				const Optional<uint> slot = hash_grid.get_cell(center + int2(x, y));
+				if (slot.hasValue)
+				{
+					const HashGridCell cell = hash_grid.cells[slot.value];
+					if (cell.food_amount > 0) food_cell_count++;
+					food_trail += hash_grid.get_food_trail(cell);
+				}
 			}
 		}
 	}
-	return strength;
+
+	// food smells stronger than any trail, so that ants on a trail turn to food next to it
+	bool is_stronger_than(Smell other)
+	{
+		return food_cell_count != other.food_cell_count ? food_cell_count > other.food_cell_count : food_trail > other.food_trail;
+	}
 }
 
 // the turn, at most max_turn either way, toward the stronger smell of the antennae, none if straight ahead smells strongest
 float turn_to_smell(Ant ant, HashGrid hash_grid, float max_turn)
 {
-	const float left = smell(hash_grid, ant.pos + rotate(ant.dir, ANTENNA_ANGLE) * ANTENNA_LENGTH);
-	const float ahead = smell(hash_grid, ant.pos + ant.dir * ANTENNA_LENGTH);
-	const float right = smell(hash_grid, ant.pos + rotate(ant.dir, -ANTENNA_ANGLE) * ANTENNA_LENGTH);
-	if (ahead >= left && ahead >= right) return 0.0;
-	return left > right ? max_turn : -max_turn;
+	const Smell left = Smell(hash_grid, ant.pos + rotate(ant.dir, ANTENNA_ANGLE) * ANTENNA_LENGTH);
+	const Smell ahead = Smell(hash_grid, ant.pos + ant.dir * ANTENNA_LENGTH);
+	const Smell right = Smell(hash_grid, ant.pos + rotate(ant.dir, -ANTENNA_ANGLE) * ANTENNA_LENGTH);
+	if (!left.is_stronger_than(ahead) && !right.is_stronger_than(ahead)) return 0.0;
+	return left.is_stronger_than(right) ? max_turn : -max_turn;
 }
 
 // the turn, at most max_turn either way, toward a point
@@ -95,7 +108,7 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	vkte::Buffer<Ant> ants = vkte::get_buffer<Ant>(pc.ants);
 	Nest* nest_pointer = vkte::get_buffer<Nest>(pc.nest).get_pointer();
 	const Nest nest = nest_pointer[0];
-	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, float(pc.step) * SIMULATION_TIME_STEP);
+	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, pc.step);
 	Random rng = Random(ant_index + pc.ant_count * pc.step + 27349843);
 	Ant ant = ants[ant_index];
 	// a new ant leaves the nest in a random direction
@@ -140,16 +153,18 @@ void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	const uint ant_index = dispatch_thread_id.x;
 	if (ant_index >= pc.ant_count) return;
 	vkte::Buffer<Ant> ants = vkte::get_buffer<Ant>(pc.ants);
-	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, float(pc.step) * SIMULATION_TIME_STEP);
+	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, pc.step);
 	Ant ant = ants[ant_index];
 	const int2 hash_grid_pos = get_hash_grid_pos(ant.pos);
 	if (ant.has_food != 0)
 	{
-		hash_grid.lay_food_trail(hash_grid_pos);
+		// the seconds the ant spends in the cell this step
+		hash_grid.lay_food_trail(hash_grid_pos, SIMULATION_TIME_STEP);
 	}
-	else if (let slot = hash_grid.get_cell(hash_grid_pos))
+	else
 	{
-		if (hash_grid.take_food(slot))
+		const Optional<uint> slot = hash_grid.get_cell(hash_grid_pos);
+		if (slot.hasValue && hash_grid.take_food(slot.value))
 		{
 			ant.has_food = 1;
 			ant.dir = -ant.dir;
