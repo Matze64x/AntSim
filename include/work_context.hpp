@@ -46,6 +46,6 @@ private:
 	void update_uniform_buffer(AppState& app_state);
 	void update_frame_times(AppState& app_state);
 	void record_and_present(AppState& app_state);
-	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset, uint32_t step_count);
+	void record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset, bool clear_walls, uint32_t step_count);
 	void record_rendering(vk::CommandBuffer& cb, uint32_t image_idx, AppState& app_state, const PushConstants& pc);
 };

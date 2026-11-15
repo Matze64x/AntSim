@@ -39,6 +39,8 @@ void UI::record_window(vk::CommandBuffer& cb, AppState& app_state)
 	if (ImGui::Button("Reset Simulation")) app_state.reset_simulation = true;
 	ImGui::SameLine();
 	if (ImGui::Button("Reload Shaders")) app_state.reload_shaders = true;
+	ImGui::SameLine();
+	if (ImGui::Button("Clear Walls")) app_state.clear_walls = true;
 	if (app_state.shaders_compiled) ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Shaders compiled");
 	else ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Shader compilation failed");
 
@@ -47,11 +49,20 @@ void UI::record_window(vk::CommandBuffer& cb, AppState& app_state)
 	visualization_controls("Food", app_state.visualizations.food);
 	visualization_controls("Food Trail", app_state.visualizations.food_trail);
 	visualization_controls("Nest", app_state.visualizations.nest);
+	visualization_controls("Wall", app_state.visualizations.wall);
 	ImGui::Text("Ants Colors");
 	ImGui::ColorEdit3("Without Food", &app_state.visualizations.ant_wo_food_color.x);
 	ImGui::ColorEdit3("Without Food Direction Marker", &app_state.visualizations.ant_wo_food_dir_color.x);
 	ImGui::ColorEdit3("With Food", &app_state.visualizations.ant_w_food_color.x);
 	ImGui::ColorEdit3("With Food Direction Marker", &app_state.visualizations.ant_w_food_dir_color.x);
+	ImGui::PopItemWidth();
+	ImGui::Separator();
+
+	static constexpr std::array<const char*, 3> right_mouse_tools{"Add Food", "Paint Wall", "Erase Wall"};
+	int right_mouse_tool = int(app_state.right_mouse_tool);
+	ImGui::PushItemWidth(120.0f);
+	if (ImGui::Combo("Right Mouse", &right_mouse_tool, right_mouse_tools.data(), int(right_mouse_tools.size()))) app_state.right_mouse_tool = RightMouseTool(right_mouse_tool);
+	ImGui::SliderFloat("Wall Brush Radius", &app_state.wall_stroke.radius, 0.02f, 0.5f, "%.2f m");
 	ImGui::PopItemWidth();
 	ImGui::Separator();
 

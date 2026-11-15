@@ -1,6 +1,7 @@
 import include.hash_grid;
 import include.nest;
 import include.visualization;
+import include.walls;
 import shared.hash_grid;
 import shared.nest;
 import shared.push_constants;
@@ -62,6 +63,8 @@ float4 fragment_main(ScreenVertex input) : SV_Target
 	const UniformBufferData ub = vkte::get_single_element_buffer<UniformBufferData>(pc.uniform_buffer);
 	const Nest nest = vkte::get_single_element_buffer<Nest>(pc.nest);
 	const float2 pos = input.screen_uv * (ub.range_max - ub.range_min) + ub.range_min;
+	const Walls walls = Walls(vkte::get_buffer<uint32_t>(pc.walls).get_pointer());
+	if (walls.is_wall(get_hash_grid_pos(pos)) && ub.visualizations.wall.is_shown()) return ub.visualizations.wall.get_color(1.0);
 	if (distance(pos, nest.pos) < nest.get_radius() && ub.visualizations.nest.is_shown())
 	{
 		return ub.visualizations.nest.get_color(nest.get_level_progress());

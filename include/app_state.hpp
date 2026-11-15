@@ -4,6 +4,7 @@
 #include "glm/vec2.hpp"
 #include "glm/vec3.hpp"
 #include "shared/uniform_buffer.slang"
+#include "shared/walls.slang"
 
 enum TimerNames {
 	TIMER_SIMULATION = 0,
@@ -18,6 +19,7 @@ inline Visualizations get_default_visualizations()
 	// dark cyan
 	visualizations.food_trail = Visualization{.color = glm::vec3(0.0f, 0.4f, 0.4f), .color_map = ColorMap::CustomColor};
 	visualizations.nest = Visualization{.color = glm::vec3(0.0f), .color_map = ColorMap::Plasma};
+	visualizations.wall = Visualization{.color = glm::vec3(0.45f), .color_map = ColorMap::CustomColor};
 	// blue with a pink leading edge
 	visualizations.ant_wo_food_color = glm::vec3(0.0f, 0.0f, 1.0f);
 	visualizations.ant_wo_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
@@ -26,6 +28,14 @@ inline Visualizations get_default_visualizations()
 	visualizations.ant_w_food_dir_color = glm::vec3(1.0f, 0.0f, 1.0f);
 	return visualizations;
 }
+
+// what the right mouse button does
+enum class RightMouseTool : int32_t
+{
+	AddFood,
+	PaintWall,
+	EraseWall
+};
 
 // The part of the world the window shows: as tall as height and as wide as the window's aspect ratio makes it, so that a
 // world unit is as long along both axes on the screen.
@@ -46,6 +56,9 @@ struct AppState
 	Visualizations visualizations = get_default_visualizations();
 	glm::vec2 add_food_pos = glm::vec2(0.0f, 0.0f);
 	int32_t add_food_amount = 0;
+	RightMouseTool right_mouse_tool = RightMouseTool::AddFood;
+	// what the right mouse button painted or erased of the walls since the last frame
+	WallStroke wall_stroke{.from = glm::vec2(0.0f), .to = glm::vec2(0.0f), .radius = 0.06f, .brush = WallBrush::None};
 	View view;
 	const uint32_t ant_count = 1'00;
 	const uint32_t hash_grid_capacity = 100'000;
@@ -67,6 +80,8 @@ struct AppState
 	bool reload_shaders = false;
 	// fills the buffers with the simulation's start in the next frame, which the first frame does too
 	bool reset_simulation = true;
+	// removes all walls in the next frame, which the first frame does too; resetting the simulation keeps them
+	bool clear_walls = true;
 	bool shaders_compiled = true;
 	// while panning, the world position that stays under the cursor
 	glm::vec2 pan_anchor = glm::vec2(0.0f, 0.0f);

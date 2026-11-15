@@ -1,8 +1,10 @@
 #include "simulation.hpp"
 #include <string>
+#include "glm/common.hpp"
 #include "shared/ant.slang"
 #include "shared/hash_grid.slang"
 #include "shared/nest.slang"
+#include "shared/walls.slang"
 #include "util/barrier.hpp"
 #include "vkte/buffer.hpp"
 #include "vkte/resource_declarations.hpp"
@@ -48,7 +50,9 @@ void Simulation::declare_resources(vkte::ResourceDeclarations& declarations, vkt
 	ants_buffer = add_buffer(memory_manager, "ants_buffer", sizeof(Ant), ant_count);
 	nest_buffer = add_buffer(memory_manager, "nest_buffer", sizeof(Nest), 1);
 	hash_grid_buffer = add_buffer(memory_manager, "hash_grid_buffer", sizeof(HashGridCell), hash_grid_capacity);
+	walls_buffer = add_buffer(memory_manager, "walls_buffer", sizeof(uint32_t), WALL_WORD_COUNT);
 	add_food_pipeline = add_compute_pipeline(declarations, "hash_grid.slang", "add_food");
+	paint_walls_pipeline = add_compute_pipeline(declarations, "walls.slang", "paint_walls");
 	step_ants_pipeline = add_compute_pipeline(declarations, "ants.slang", "step_ants");
 	update_hash_grid_pipeline = add_compute_pipeline(declarations, "ants.slang", "update_hash_grid");
 	fade_food_trails_pipeline = add_compute_pipeline(declarations, "hash_grid.slang", "fade_food_trails");
@@ -58,25 +62,27 @@ void Simulation::declare_resources(vkte::ResourceDeclarations& declarations, vkt
 
 void Simulation::destruct(vkte::MemoryManager& memory_manager)
 {
-	for (vkte::BufferHandle* buffer : {&ants_buffer, &nest_buffer, &hash_grid_buffer})
+	for (vkte::BufferHandle* buffer : {&ants_buffer, &nest_buffer, &hash_grid_buffer, &walls_buffer})
 	{
 		if (buffer->valid()) memory_manager.destroy(*buffer);
 		*buffer = vkte::BufferHandle();
 	}
 }
 
-PushConstants Simulation::get_push_constants(vkte::BufferHandle uniform_buffer, glm::vec2 food_pos, int32_t food_amount, uint32_t step) const
+PushConstants Simulation::get_push_constants(vkte::BufferHandle uniform_buffer, glm::vec2 food_pos, int32_t food_amount, const WallStroke& wall_stroke, uint32_t step) const
 {
 	PushConstants pc{};
 	pc.ants = ants_buffer;
 	pc.nest = nest_buffer;
 	pc.hash_grid = hash_grid_buffer;
 	pc.uniform_buffer = uniform_buffer;
+	pc.walls = walls_buffer;
 	pc.ant_count = ant_count;
 	pc.hash_grid_capacity = hash_grid_capacity;
 	pc.food_pos = food_pos;
 	pc.food_amount = food_amount;
 	pc.step = step;
+	pc.wall_stroke = wall_stroke;
 	return pc;
 }
 
@@ -88,6 +94,22 @@ void Simulation::reset(vk::CommandBuffer& cb)
 	cb.updateBuffer(memory_manager.get_buffer(nest_buffer).get(), 0, sizeof(initial_nest), &initial_nest);
 	cb.fillBuffer(memory_manager.get_buffer(hash_grid_buffer).get(), 0, vk::WholeSize, 0);
 	transfer_to_compute_barrier(cb);
+}
+
+void Simulation::clear_walls(vk::CommandBuffer& cb)
+{
+	cb.fillBuffer(engine.get_memory_manager().get_buffer(walls_buffer).get(), 0, vk::WholeSize, 0);
+	transfer_to_compute_barrier(cb);
+}
+
+void Simulation::paint_walls(vk::CommandBuffer& cb, const PushConstants& pc)
+{
+	// the cells of the stroke's bounding box, from the cell of its minimum on, plus one for the maximum's partial cell
+	const glm::vec2 extent = glm::abs(pc.wall_stroke.to - pc.wall_stroke.from) + 2.0f * pc.wall_stroke.radius;
+	const glm::uvec2 cell_count = glm::uvec2(glm::ceil(extent / HASH_GRID_CELL_LENGTH)) + 1u;
+	bind(cb, paint_walls_pipeline, pc, vk::ShaderStageFlagBits::eCompute);
+	cb.dispatch((cell_count.x + 7) / 8, (cell_count.y + 7) / 8, 1);
+	compute_to_compute_barrier(cb);
 }
 
 void Simulation::bind(vk::CommandBuffer& cb, vkte::PipelineHandle pipeline, const PushConstants& pc, vk::ShaderStageFlags stages)

@@ -92,6 +92,7 @@ void WorkContext::record_and_present(AppState& app_state)
 
 	// only once the frame is sure to run, so that a skipped frame doesn't lose the reset
 	const bool reset = std::exchange(app_state.reset_simulation, false);
+	const bool clear_walls = std::exchange(app_state.clear_walls, false);
 	if (reset)
 	{
 		app_state.simulation_step = 0;
@@ -104,9 +105,9 @@ void WorkContext::record_and_present(AppState& app_state)
 	unsimulated_time -= float(step_count) * SIMULATION_TIME_STEP;
 
 	update_uniform_buffer(app_state);
-	const PushConstants pc = simulation.get_push_constants(uniform_buffer_handles[current_frame], app_state.add_food_pos, app_state.add_food_amount, app_state.simulation_step);
+	const PushConstants pc = simulation.get_push_constants(uniform_buffer_handles[current_frame], app_state.add_food_pos, app_state.add_food_amount, app_state.wall_stroke, app_state.simulation_step);
 	vk::CommandBuffer& cb = command.begin(cb_handles[current_frame]);
-	record_simulation(cb, pc, reset, step_count);
+	record_simulation(cb, pc, reset, clear_walls, step_count);
 	app_state.simulation_step += step_count;
 	PushConstants render_pc = pc;
 	render_pc.step = app_state.simulation_step;
@@ -150,14 +151,16 @@ void WorkContext::update_uniform_buffer(AppState& app_state)
 	engine.get_memory_manager().get_buffer(uniform_buffer_handles[engine.get_current_frame()]).update_data(uniform_buffer_data);
 }
 
-void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset, uint32_t step_count)
+void WorkContext::record_simulation(vk::CommandBuffer& cb, const PushConstants& pc, bool reset, bool clear_walls, uint32_t step_count)
 {
 	vkte::DeviceTimer& device_timer = engine.get(device_timer_handles[engine.get_current_frame()]);
 	if (reset) simulation.reset(cb);
+	if (clear_walls) simulation.clear_walls(cb);
 	device_timer.reset(cb, TIMER_SIMULATION);
 	device_timer.start(cb, TIMER_SIMULATION, vk::PipelineStageFlagBits2::eComputeShader);
 	// food also while the simulation is paused
 	if (pc.food_amount > 0) simulation.add_food(cb, pc);
+	if (pc.wall_stroke.brush != WallBrush::None) simulation.paint_walls(cb, pc);
 	PushConstants step_pc = pc;
 	for (uint32_t i = 0; i < step_count; i++)
 	{

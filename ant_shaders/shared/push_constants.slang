@@ -1,8 +1,10 @@
 #pragma once
 #include "shared/common.slang"
 #ifdef __SLANG__
+import shared.walls;
 import vkte;
 #else // __SLANG__
+#include "shared/walls.slang"
 #include "vkte/resource_handles.hpp"
 #endif // __SLANG__
 
@@ -21,6 +23,7 @@ struct PushConstants
 	vkte::BufferHandle nest;
 	vkte::BufferHandle hash_grid;
 	vkte::BufferHandle uniform_buffer;
+	vkte::BufferHandle walls;
 	uint32_t ant_count;
 	uint32_t hash_grid_capacity;
 	// where food is added this frame, if food_amount > 0
@@ -28,4 +31,6 @@ struct PushConstants
 	int32_t food_amount;
 	// the simulation step that a compute pass computes, or for drawing the steps done; its time is step * SIMULATION_TIME_STEP
 	uint32_t step;
+	// what this frame paints or erases of the walls, if the brush isn't None
+	WallStroke wall_stroke;
 };

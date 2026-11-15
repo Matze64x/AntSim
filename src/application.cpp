@@ -20,11 +20,26 @@ static void dispatch_pressed_keys(vkte::EventHandler& event_handler, AppState& a
 	else if (event_handler.is_key_down(Key::MouseLeft)) app_state.view.center += app_state.pan_anchor - mouse_world_pos;
 	if (event_handler.is_key_down(Key::MouseRight))
 	{
-		// add food
-		app_state.add_food_pos = app_state.view.to_world(glm::clamp(glm::vec2(position.x, position.y), glm::vec2(0.0f), app_state.window_size), app_state.window_size);
-		app_state.add_food_amount = 255;
+		const glm::vec2 cursor_world_pos = app_state.view.to_world(glm::clamp(glm::vec2(position.x, position.y), glm::vec2(0.0f), app_state.window_size), app_state.window_size);
+		if (app_state.right_mouse_tool == RightMouseTool::AddFood)
+		{
+			app_state.add_food_pos = cursor_world_pos;
+			app_state.add_food_amount = 255;
+		}
+		else
+		{
+			// from where the cursor was in the last frame, so that fast strokes leave no gaps
+			WallStroke& stroke = app_state.wall_stroke;
+			stroke.from = event_handler.was_key_pressed(Key::MouseRight) ? cursor_world_pos : stroke.to;
+			stroke.to = cursor_world_pos;
+			stroke.brush = app_state.right_mouse_tool == RightMouseTool::PaintWall ? WallBrush::Paint : WallBrush::Erase;
+		}
 	}
-	if (event_handler.was_key_released(Key::MouseRight)) app_state.add_food_amount = 0;
+	if (event_handler.was_key_released(Key::MouseRight))
+	{
+		app_state.add_food_amount = 0;
+		app_state.wall_stroke.brush = WallBrush::None;
+	}
 	const float mouse_wheel_motion = event_handler.get_mouse_wheel_motion().y;
 	// zoom about the cursor: the point under it stays under it
 	if (std::abs(mouse_wheel_motion) > 0.001f)

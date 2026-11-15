@@ -1,6 +1,7 @@
 import include.hash_grid;
 import include.nest;
 import include.random;
+import include.walls;
 import shared.ant;
 import shared.hash_grid;
 import shared.nest;
@@ -29,26 +30,27 @@ static const float ANTENNA_LENGTH = 0.1;
 static const float PATH_INTEGRATION_ERROR = 0.03;
 // how far beyond the nest's edge ants smell the nest, in meters, which corrects their estimate of where it is
 static const float NEST_SCENT_DISTANCE = 0.2;
-// how far ants may go from the origin along each axis
-static const float WORLD_BOUND = 100.0;
+// an ant that a wall blocks tries headings turned by multiples of this angle, the smallest first
+static const float WALL_TURN_ANGLE = radians(30.0);
 
 float2 rotate(float2 v, float angle)
 {
 	return mul(float2x2(cos(angle), -sin(angle), sin(angle), cos(angle)), v);
 }
 
-// what an antenna smells in the cells around a point
+// what an antenna smells in the cells around a point; nothing in a wall
 struct Smell
 {
 	// the cells with food
 	uint food_cell_count;
 	float food_trail;
 
-	__init(HashGrid hash_grid, float2 pos)
+	__init(HashGrid hash_grid, Walls walls, float2 pos)
 	{
 		food_cell_count = 0;
 		food_trail = 0.0;
 		const int2 center = get_hash_grid_pos(pos);
+		if (walls.is_wall(center)) return;
 		for (int y = -1; y <= 1; y++)
 		{
 			for (int x = -1; x <= 1; x++)
@@ -72,11 +74,11 @@ struct Smell
 }
 
 // the turn, at most max_turn either way, toward the stronger smell of the antennae, none if straight ahead smells strongest
-float turn_to_smell(Ant ant, HashGrid hash_grid, float max_turn)
+float turn_to_smell(Ant ant, HashGrid hash_grid, Walls walls, float max_turn)
 {
-	const Smell left = Smell(hash_grid, ant.pos + rotate(ant.dir, ANTENNA_ANGLE) * ANTENNA_LENGTH);
-	const Smell ahead = Smell(hash_grid, ant.pos + ant.dir * ANTENNA_LENGTH);
-	const Smell right = Smell(hash_grid, ant.pos + rotate(ant.dir, -ANTENNA_ANGLE) * ANTENNA_LENGTH);
+	const Smell left = Smell(hash_grid, walls, ant.pos + rotate(ant.dir, ANTENNA_ANGLE) * ANTENNA_LENGTH);
+	const Smell ahead = Smell(hash_grid, walls, ant.pos + ant.dir * ANTENNA_LENGTH);
+	const Smell right = Smell(hash_grid, walls, ant.pos + rotate(ant.dir, -ANTENNA_ANGLE) * ANTENNA_LENGTH);
 	if (!left.is_stronger_than(ahead) && !right.is_stronger_than(ahead)) return 0.0;
 	return left.is_stronger_than(right) ? max_turn : -max_turn;
 }
@@ -87,6 +89,22 @@ float turn_to(Ant ant, float2 point, float max_turn)
 	const float2 to_point = point - ant.pos;
 	const float angle = atan2(ant.dir.x * to_point.y - ant.dir.y * to_point.x, dot(ant.dir, to_point));
 	return clamp(angle, -max_turn, max_turn);
+}
+
+// The heading closest to the ant's along which a step doesn't enter a wall, so that ants slide along walls: turned by
+// ever larger multiples of WALL_TURN_ANGLE, to the side the ant turns to first; back the way it came if all are blocked.
+float2 get_free_dir(Ant ant, Walls walls, float step_length, float side)
+{
+	for (int i = 0; i * WALL_TURN_ANGLE < float.getPi(); i++)
+	{
+		for (int j = 0; j < 2; j++)
+		{
+			const float angle = (j == 0 ? side : -side) * float(i) * WALL_TURN_ANGLE;
+			const float2 dir = rotate(ant.dir, angle);
+			if (!walls.is_wall(get_hash_grid_pos(ant.pos + dir * step_length))) return dir;
+		}
+	}
+	return -ant.dir;
 }
 
 // The ant puts down its food, and the nest grows to the level of its food. The level follows from the food that this
@@ -109,6 +127,7 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	Nest* nest_pointer = vkte::get_buffer<Nest>(pc.nest).get_pointer();
 	const Nest nest = nest_pointer[0];
 	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, pc.step);
+	const Walls walls = Walls(vkte::get_buffer<uint32_t>(pc.walls).get_pointer());
 	Random rng = Random(ant_index + pc.ant_count * pc.step + 27349843);
 	Ant ant = ants[ant_index];
 	// a new ant leaves the nest in a random direction
@@ -120,16 +139,15 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 
 	const float max_turn = TURN_RATE * SIMULATION_TIME_STEP;
 	float turn = rng.get_float(-1.0, 1.0) * WANDER_STRENGTH * sqrt(SIMULATION_TIME_STEP);
-	turn += ant.has_food != 0 ? turn_to(ant, ant.nest_estimate, max_turn) : turn_to_smell(ant, hash_grid, max_turn);
+	turn += ant.has_food != 0 ? turn_to(ant, ant.nest_estimate, max_turn) : turn_to_smell(ant, hash_grid, walls, max_turn);
 	ant.dir = normalize(rotate(ant.dir, turn));
 	const float step_length = ANT_SPEED * SIMULATION_TIME_STEP;
-	ant.pos += ant.dir * step_length;
+	// an ant in a wall (painted onto it) walks out of it in any direction
+	if (!walls.is_wall(get_hash_grid_pos(ant.pos))) ant.dir = get_free_dir(ant, walls, step_length, turn >= 0.0 ? 1.0 : -1.0);
+	const float2 next_pos = ant.pos + ant.dir * step_length;
+	// unless walls enclose the ant
+	if (!walls.is_wall(get_hash_grid_pos(next_pos)) || walls.is_wall(get_hash_grid_pos(ant.pos))) ant.pos = next_pos;
 	ant.nest_estimate += rng.get_float2_in_disk() * PATH_INTEGRATION_ERROR * sqrt(step_length);
-
-	// an ant at the world's bound turns back
-	const float2 bounded_pos = clamp(ant.pos, -WORLD_BOUND, WORLD_BOUND);
-	if (any(bounded_pos != ant.pos)) ant.dir = -ant.dir;
-	ant.pos = bounded_pos;
 
 	const float nest_distance = distance(ant.pos, nest.pos);
 	if (nest_distance < nest.get_radius() + NEST_SCENT_DISTANCE) ant.nest_estimate = nest.pos;

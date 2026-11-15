@@ -25,6 +25,7 @@ struct Visualizations
 	Visualization food;
 	Visualization food_trail;
 	Visualization nest;
+	Visualization wall;
 	float3 ant_wo_food_color;
 	// of the ant's leading edge
 	float3 ant_wo_food_dir_color;
