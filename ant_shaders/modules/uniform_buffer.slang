@@ -37,11 +37,23 @@ struct Visualizations
 	float3 ant_w_food_dir_color;
 };
 
+// what the UI sets of the ants' behavior
+struct BehaviorSettings
+{
+	// How far searching ants go before they give up, in meters of their way home: the farther, the more they explore, the
+	// nearer, the more of them find food nearby. A searching ant gives up with a chance per meter walked of
+	// 2 * its way home / search_distance^2, so that it searches farther out than a way home d with chance
+	// exp(-(d / search_distance)^2): half the ants give up within 0.83 search_distance, the farther out the likelier, but
+	// not all at once.
+	float search_distance;
+};
+
 struct UniformBufferData
 {
 	float2 range_min;
 	float2 range_max;
 	Visualizations visualizations;
+	BehaviorSettings behavior;
 };
 
 #ifdef __SLANG__

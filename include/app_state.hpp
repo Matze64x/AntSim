@@ -56,6 +56,7 @@ struct View
 struct AppState
 {
 	Visualizations visualizations = get_default_visualizations();
+	BehaviorSettings behavior{.search_distance = 20.0f};
 	glm::vec2 add_food_pos = glm::vec2(0.0f, 0.0f);
 	int32_t add_food_amount = 0;
 	// the food that the right mouse button puts into a cell

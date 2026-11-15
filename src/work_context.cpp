@@ -158,6 +158,7 @@ void WorkContext::update_uniform_buffer(AppState& app_state)
 	uniform_buffer_data.range_min = app_state.view.get_min(app_state.window_size);
 	uniform_buffer_data.range_max = app_state.view.get_max(app_state.window_size);
 	uniform_buffer_data.visualizations = app_state.visualizations;
+	uniform_buffer_data.behavior = app_state.behavior;
 	engine.get_memory_manager().get_buffer(uniform_buffer_handles[engine.get_current_frame()]).update_data(uniform_buffer_data);
 }
 

@@ -32,9 +32,6 @@ static const float ANTENNA_ANGLE = radians(40.0);
 static const float ANTENNA_LENGTH = 0.1;
 // the error that path integration adds, in meters per square root of a meter walked (a random walk of the estimate)
 static const float PATH_INTEGRATION_ERROR = 0.03;
-// how far searching ants go before they give up, in meters of their way home (see give_up_chance): the farther, the more
-// they explore, the nearer, the more of them find food nearby
-static const float SEARCH_DISTANCE = 20.0;
 // an ant that a wall blocks tries headings turned by multiples of this angle, the smallest first
 static const float WALL_TURN_ANGLE = radians(30.0);
 
@@ -207,10 +204,9 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 		ant.nest_estimate = nest.pos;
 	}
 
-	// A searching ant gives up with a chance per meter walked of 2 * its way home / SEARCH_DISTANCE^2, so that the chance
-	// that it searches farther out than a way home d is exp(-(d / SEARCH_DISTANCE)^2): half the ants give up within
-	// 0.83 SEARCH_DISTANCE, the farther out the likelier, but not all at once.
-	const float give_up_chance = 2.0 * ant.distance_walked * ANT_SPEED * SIMULATION_TIME_STEP / (SEARCH_DISTANCE * SEARCH_DISTANCE);
+	// see BehaviorSettings::search_distance
+	const float search_distance = vkte::get_single_element_buffer<UniformBufferData>(pc.uniform_buffer).behavior.search_distance;
+	const float give_up_chance = 2.0 * ant.distance_walked * ANT_SPEED * SIMULATION_TIME_STEP / (search_distance * search_distance);
 	if (ant.state == AntState::Search && rng.get_float() < give_up_chance) ant.state = AntState::GiveUp;
 	const bool heads_home = ant.state != AntState::Search;
 
