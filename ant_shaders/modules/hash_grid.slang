@@ -14,7 +14,7 @@ AS_CONSTANT float HASH_GRID_CELL_LENGTH = 0.04f;
 // older part, nearer to where it came from, still tells the shorter way.
 AS_CONSTANT float TRAIL_AGING_SPEED = ANT_SPEED / 2.0f;
 // ants ignore trails that tell a longer way than this, in meters
-AS_CONSTANT float MAX_TRAIL_DISTANCE = 20.0f;
+AS_CONSTANT float MAX_TRAIL_DISTANCE = 50.0f;
 // Cells store their trails as of a trail epoch, which this many steps make up; after the last one, a pass ages every
 // cell's trails to the next epoch. So aging needs no pass per step.
 AS_CONSTANT uint32_t TRAIL_EPOCH_STEP_COUNT = 600;

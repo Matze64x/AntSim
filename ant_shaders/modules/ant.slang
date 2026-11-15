@@ -4,6 +4,16 @@
 // in meters per second
 AS_CONSTANT float ANT_SPEED = 0.2f;
 
+enum class AntState : uint32_t
+{
+	// for food; starts from the nest
+	Search,
+	// food home
+	CarryFood,
+	// home without food, after searching for longer than trails reach
+	GiveUp
+};
+
 struct Ant
 {
 	float2 pos;
@@ -15,6 +25,5 @@ struct Ant
 	// The meters the ant walked since it left the nest or the food: its way back there, which it shortens to that of a
 	// trail it crosses that tells a shorter one, and which it lays in its trail.
 	float distance_walked;
-	// 0 or 1, since a bool's size differs between Slang's and C++'s buffers
-	uint32_t has_food;
+	AntState state;
 };
