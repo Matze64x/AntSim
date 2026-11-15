@@ -23,7 +23,7 @@ void add_food()
 	if (cell.key != key)
 	{
 		cell.key = key;
-		cell.food_trail = 0.0;
+		cell.food_trail = 0;
 		cell.home_trail = 0;
 	}
 	cell.food_amount = pc.food_amount;
@@ -58,9 +58,11 @@ void age_trails(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	if (slot >= pc.hash_grid_capacity) return;
 	HashGridCell* cells = vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer();
 	const float epoch_length = float(TRAIL_EPOCH_STEP_COUNT) * SIMULATION_TIME_STEP;
-	cells[slot].food_trail *= get_food_trail_fade(epoch_length);
+	const float aging = TRAIL_AGING_SPEED * epoch_length;
+	const uint food_trail = cells[slot].food_trail;
+	if (food_trail != 0) cells[slot].food_trail = encode_trail_distance(decode_trail_distance(food_trail) + aging);
 	const uint home_trail = cells[slot].home_trail;
-	if (home_trail != 0) cells[slot].home_trail = encode_home_distance(decode_home_distance(home_trail) + HOME_TRAIL_AGING_SPEED * epoch_length);
+	if (home_trail != 0) cells[slot].home_trail = encode_trail_distance(decode_trail_distance(home_trail) + aging);
 }
 
 struct ScreenVertex
@@ -98,10 +100,8 @@ float4 fragment_main(ScreenVertex input) : SV_Target
 	const HashGridCell cell = hash_grid.cells[slot.value];
 	if (cell.food_amount > 0 && ub.visualizations.food.is_shown()) return ub.visualizations.food.get_color(float(cell.food_amount) / 255.0);
 	// on a logarithmic scale from the faintest trail (0) to one 100 times as strong (1)
-	const float food_trail_strength = saturate(log2(hash_grid.get_food_trail(cell) / MIN_FOOD_TRAIL) / log2(100.0));
-	if (hash_grid.has_food_trail(cell) && ub.visualizations.food_trail.is_shown()) return ub.visualizations.food_trail.get_color(food_trail_strength);
-	// from no way home (0) to the nest (1)
-	const float home_trail_strength = 1.0 - hash_grid.get_home_distance(cell) / MAX_HOME_DISTANCE;
-	if (hash_grid.has_home_trail(cell) && ub.visualizations.home_trail.is_shown()) return ub.visualizations.home_trail.get_color(home_trail_strength);
+	// from the longest way that ants follow (0) to the food or the nest (1)
+	if (hash_grid.has_trail(cell, Trail::Food) && ub.visualizations.food_trail.is_shown()) return ub.visualizations.food_trail.get_color(1.0 - hash_grid.get_trail_distance(cell, Trail::Food) / MAX_TRAIL_DISTANCE);
+	if (hash_grid.has_trail(cell, Trail::Home) && ub.visualizations.home_trail.is_shown()) return ub.visualizations.home_trail.get_color(1.0 - hash_grid.get_trail_distance(cell, Trail::Home) / MAX_TRAIL_DISTANCE);
 	return float4(0.0, 0.0, 0.0, 1.0);
 }

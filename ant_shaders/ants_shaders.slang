@@ -13,18 +13,11 @@ import vkte;
 ConstantBuffer<PushConstants> pc;
 
 // Ants walk with a heading that drifts randomly. Ants searching for food lay the home trail, which tells their way home,
-// and steer toward the strongest smell of food or food trail ahead; ants carrying food lay the food trail and steer toward
-// the home trail ahead that tells the shortest way home, or where they believe the nest is if they smell none. Home
-// trails tell the shortest way any searching ant knew, so they lead home along the ways ants walked, around walls too.
-// An ant lays the food trail the weaker the farther it walked from the food, so that it leads there; since busy food
-// trails grow stronger and unused ones fade, the colony converges on short ones.
-
-// which trail an ant follows: the food trail leads to food, the home trail to the nest
-enum class Trail
-{
-	Food,
-	Home
-}
+// and steer toward food or the food trail ahead that tells the shortest way to food; ants carrying food lay the food
+// trail, which tells their way from the food, and steer toward the nest or the home trail ahead that tells the shortest
+// way home, or where they believe the nest is if they smell none. A trail tells the shortest way that any ant knew, and
+// an ant takes a shorter way that its cell's trail tells, so trails lead along the shortest ways ants walked, around
+// walls too, and any ant that strays onto a shorter way shortens them.
 
 // how fast the heading drifts randomly, in radians per square root of a second (a random walk of the heading)
 static const float WANDER_STRENGTH = 2.0;
@@ -36,10 +29,6 @@ static const float ANTENNA_ANGLE = radians(40.0);
 static const float ANTENNA_LENGTH = 0.1;
 // the error that path integration adds, in meters per square root of a meter walked (a random walk of the estimate)
 static const float PATH_INTEGRATION_ERROR = 0.03;
-// An ant lays the food trail half as strong for every this many meters it walked from the food. Shorter than the way an
-// ant walks while the trail fades to half (ANT_SPEED * FOOD_TRAIL_HALF_LIFE), so that along an ant's path the older
-// part, nearer to the food, stays stronger than the fresher part: the trail leads to the food, not after the ant.
-static const float FOOD_TRAIL_HALF_DISTANCE = ANT_SPEED * FOOD_TRAIL_HALF_LIFE / 2.0;
 // an ant that a wall blocks tries headings turned by multiples of this angle, the smallest first
 static const float WALL_TURN_ANGLE = radians(30.0);
 
@@ -57,7 +46,7 @@ struct Smell
 	// of these cells the one nearest to the point, if any
 	float2 nearest_source_pos;
 	bool has_trail;
-	// the larger the stronger: the food trail's amount, or the negated shortest way home that the home trail tells
+	// the larger the stronger: the negated shortest way that the trail tells
 	float trail_strength;
 
 	__init(HashGrid hash_grid, Walls walls, Nest nest, float2 pos, Trail trail)
@@ -65,7 +54,7 @@ struct Smell
 		source_cell_count = 0;
 		nearest_source_pos = pos;
 		has_trail = false;
-		trail_strength = trail == Trail::Food ? 0.0 : -float.maxValue;
+		trail_strength = -float.maxValue;
 		const int2 center = get_hash_grid_pos(pos);
 		if (walls.is_wall(center)) return;
 		for (int y = -1; y <= 1; y++)
@@ -78,17 +67,9 @@ struct Smell
 				if (slot.hasValue)
 				{
 					const HashGridCell cell = hash_grid.cells[slot.value];
-					if (trail == Trail::Food)
-					{
-						if (cell.food_amount > 0) add_source_cell(index, pos);
-						has_trail = has_trail || hash_grid.has_food_trail(cell);
-						trail_strength += hash_grid.get_food_trail(cell);
-					}
-					else
-					{
-						has_trail = has_trail || hash_grid.has_home_trail(cell);
-						trail_strength = max(trail_strength, -hash_grid.get_home_distance(cell));
-					}
+					if (trail == Trail::Food && cell.food_amount > 0) add_source_cell(index, pos);
+					has_trail = has_trail || hash_grid.has_trail(cell, trail);
+					trail_strength = max(trail_strength, -hash_grid.get_trail_distance(cell, trail));
 				}
 			}
 		}
@@ -261,16 +242,13 @@ void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, pc.step);
 	Ant ant = ants[ant_index];
 	const int2 hash_grid_pos = get_hash_grid_pos(ant.pos);
-	if (ant.has_food != 0)
+	// the trail that leads back where the ant came from
+	const Trail trail = ant.has_food != 0 ? Trail::Food : Trail::Home;
+	const Optional<uint> slot = hash_grid.get_cell(hash_grid_pos);
+	if (slot.hasValue) ant.distance_walked = min(ant.distance_walked, hash_grid.get_trail_distance(hash_grid.cells[slot.value], trail));
+	if (ant.distance_walked <= MAX_TRAIL_DISTANCE) hash_grid.lay_trail(hash_grid_pos, trail, ant.distance_walked);
+	if (ant.has_food == 0)
 	{
-		// the seconds the ant spends in the cell this step, weakened by the distance it walked from the food
-		hash_grid.lay_food_trail(hash_grid_pos, SIMULATION_TIME_STEP * exp2(-ant.distance_walked / FOOD_TRAIL_HALF_DISTANCE));
-	}
-	else
-	{
-		const Optional<uint> slot = hash_grid.get_cell(hash_grid_pos);
-		if (slot.hasValue) ant.distance_walked = min(ant.distance_walked, hash_grid.get_home_distance(hash_grid.cells[slot.value]));
-		if (ant.distance_walked <= MAX_HOME_DISTANCE) hash_grid.lay_home_trail(hash_grid_pos, ant.distance_walked);
 		if (slot.hasValue && hash_grid.take_food(slot.value))
 		{
 			ant.has_food = 1;
