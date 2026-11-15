@@ -1,4 +1,14 @@
-import shared.nest;
+#pragma once
+#include "modules/common.slang"
+
+struct Nest
+{
+	float2 pos;
+	int32_t level;
+	uint32_t food_amount;
+};
+
+#ifdef __SLANG__
 
 extension Nest
 {
@@ -28,3 +38,5 @@ extension Nest
 		return saturate((float(food_amount) - level_start) / (level_end - level_start));
 	}
 }
+
+#endif // __SLANG__

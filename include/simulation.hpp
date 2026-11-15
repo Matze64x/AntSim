@@ -1,7 +1,7 @@
 #pragma once
 
 #include "glm/vec2.hpp"
-#include "shared/push_constants.slang"
+#include "modules/push_constants.slang"
 #include "vkte/component.hpp"
 #include "vkte/engine.hpp"
 #include "vkte/resource_handles.hpp"
@@ -44,7 +44,7 @@ private:
 	vkte::PipelineHandle step_ants_pipeline;
 	vkte::PipelineHandle update_hash_grid_pipeline;
 	vkte::PipelineHandle age_trails_pipeline;
-	vkte::PipelineHandle hash_grid_render_pipeline;
+	vkte::PipelineHandle world_render_pipeline;
 	vkte::PipelineHandle ants_render_pipeline;
 
 	void bind(vk::CommandBuffer& cb, vkte::PipelineHandle pipeline, const PushConstants& pc, vk::ShaderStageFlags stages);

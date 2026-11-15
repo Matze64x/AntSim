@@ -2,7 +2,7 @@
 #include <array>
 #include <string>
 #include "imgui.h"
-#include "shared/push_constants.slang"
+#include "modules/push_constants.slang"
 #include "backends/imgui_impl_sdl3.h"
 
 UI::UI(vkte::Engine& engine) : ui(engine.get_ui())

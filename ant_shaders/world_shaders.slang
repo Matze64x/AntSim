@@ -1,11 +1,10 @@
-import include.hash_grid;
-import include.nest;
-import include.visualization;
-import include.walls;
-import shared.hash_grid;
-import shared.nest;
-import shared.push_constants;
-import shared.uniform_buffer;
+// The world's shaders: what the user changes, food (add_food) and walls (paint_walls), aging the trails (age_trails),
+// and drawing the walls, the nest, food and trails covering the screen (vertex_main, fragment_main).
+import modules.hash_grid;
+import modules.nest;
+import modules.push_constants;
+import modules.uniform_buffer;
+import modules.walls;
 import vkte;
 
 [[vk::push_constant]]
@@ -28,6 +27,26 @@ void add_food()
 		cell.home_trail = 0;
 	}
 	cell.food_amount = pc.food_amount;
+}
+
+float get_distance_to_line(float2 pos, float2 from, float2 to)
+{
+	const float2 line = to - from;
+	const float t = dot(line, line) > 0.0 ? saturate(dot(pos - from, line) / dot(line, line)) : 0.0;
+	return distance(pos, from + t * line);
+}
+
+// Paints or erases the walls of the cells that the push constants' wall stroke covers. A thread per cell of the stroke's
+// bounding box, starting at its minimum.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void paint_walls(uint3 dispatch_thread_id : SV_DispatchThreadID)
+{
+	const WallStroke stroke = pc.wall_stroke;
+	const int2 index = get_hash_grid_pos(min(stroke.from, stroke.to) - stroke.radius) + int2(dispatch_thread_id.xy);
+	const Walls walls = Walls(vkte::get_buffer<uint32_t>(pc.walls).get_pointer());
+	if (!walls.is_in_world(index) || get_distance_to_line(get_hash_grid_cell_pos(index), stroke.from, stroke.to) > stroke.radius) return;
+	walls.set_wall(index, stroke.brush == WallBrush::Paint);
 }
 
 // Ages every cell's trails to the next trail epoch, after the last step of one. A thread per slot.

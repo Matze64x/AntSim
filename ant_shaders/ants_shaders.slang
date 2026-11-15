@@ -1,12 +1,12 @@
-import include.hash_grid;
-import include.nest;
-import include.random;
-import include.walls;
-import shared.ant;
-import shared.hash_grid;
-import shared.nest;
-import shared.push_constants;
-import shared.uniform_buffer;
+// The ants' shaders: the simulation step, in which they move (step_ants) and then lay trails and take food
+// (update_hash_grid), and drawing them, a quad each (vertex_main, fragment_main).
+import modules.ant;
+import modules.hash_grid;
+import modules.nest;
+import modules.push_constants;
+import modules.random;
+import modules.uniform_buffer;
+import modules.walls;
 import vkte;
 
 [[vk::push_constant]]

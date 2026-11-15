@@ -1,10 +1,10 @@
 #include "simulation.hpp"
 #include <string>
 #include "glm/common.hpp"
-#include "shared/ant.slang"
-#include "shared/hash_grid.slang"
-#include "shared/nest.slang"
-#include "shared/walls.slang"
+#include "modules/ant.slang"
+#include "modules/hash_grid.slang"
+#include "modules/nest.slang"
+#include "modules/walls.slang"
 #include "util/barrier.hpp"
 #include "vkte/buffer.hpp"
 #include "vkte/resource_declarations.hpp"
@@ -51,13 +51,13 @@ void Simulation::declare_resources(vkte::ResourceDeclarations& declarations, vkt
 	nest_buffer = add_buffer(memory_manager, "nest_buffer", sizeof(Nest), 1);
 	hash_grid_buffer = add_buffer(memory_manager, "hash_grid_buffer", sizeof(HashGridCell), hash_grid_capacity);
 	walls_buffer = add_buffer(memory_manager, "walls_buffer", sizeof(uint32_t), WALL_WORD_COUNT);
-	add_food_pipeline = add_compute_pipeline(declarations, "hash_grid.slang", "add_food");
-	paint_walls_pipeline = add_compute_pipeline(declarations, "walls.slang", "paint_walls");
-	step_ants_pipeline = add_compute_pipeline(declarations, "ants.slang", "step_ants");
-	update_hash_grid_pipeline = add_compute_pipeline(declarations, "ants.slang", "update_hash_grid");
-	age_trails_pipeline = add_compute_pipeline(declarations, "hash_grid.slang", "age_trails");
-	hash_grid_render_pipeline = add_render_pipeline(declarations, frame_settings, "hash_grid.slang");
-	ants_render_pipeline = add_render_pipeline(declarations, frame_settings, "ants.slang");
+	add_food_pipeline = add_compute_pipeline(declarations, "world_shaders.slang", "add_food");
+	paint_walls_pipeline = add_compute_pipeline(declarations, "world_shaders.slang", "paint_walls");
+	step_ants_pipeline = add_compute_pipeline(declarations, "ants_shaders.slang", "step_ants");
+	update_hash_grid_pipeline = add_compute_pipeline(declarations, "ants_shaders.slang", "update_hash_grid");
+	age_trails_pipeline = add_compute_pipeline(declarations, "world_shaders.slang", "age_trails");
+	world_render_pipeline = add_render_pipeline(declarations, frame_settings, "world_shaders.slang");
+	ants_render_pipeline = add_render_pipeline(declarations, frame_settings, "ants_shaders.slang");
 }
 
 void Simulation::destruct(vkte::MemoryManager& memory_manager)
@@ -146,7 +146,7 @@ void Simulation::step(vk::CommandBuffer& cb, const PushConstants& pc)
 void Simulation::draw(vk::CommandBuffer& cb, const PushConstants& pc)
 {
 	// without a depth attachment, later draws cover earlier ones
-	bind(cb, hash_grid_render_pipeline, pc, render_stages);
+	bind(cb, world_render_pipeline, pc, render_stages);
 	// a triangle covering the screen
 	cb.draw(3, 1, 0, 0);
 	bind(cb, ants_render_pipeline, pc, render_stages);

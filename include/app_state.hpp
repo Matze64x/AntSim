@@ -3,8 +3,8 @@
 #include <cstdint>
 #include "glm/vec2.hpp"
 #include "glm/vec3.hpp"
-#include "shared/uniform_buffer.slang"
-#include "shared/walls.slang"
+#include "modules/uniform_buffer.slang"
+#include "modules/walls.slang"
 
 enum TimerNames {
 	TIMER_SIMULATION = 0,

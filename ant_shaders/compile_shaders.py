@@ -30,7 +30,7 @@ def build_command(shader_dir, bin_dir, filename, stage, entry):
 
 def main():
 	shader_dir = os.path.dirname(os.path.realpath(__file__))
-	# the files with entry points are those directly in this directory; include/ and shared/ hold modules
+	# the files with entry points (*_shaders.slang) are those directly in this directory; modules/ holds the modules
 	shaders = sorted(f for f in os.listdir(shader_dir) if f.endswith(".slang") and os.path.isfile(os.path.join(shader_dir, f)))
 	if shutil.which("slangc") is None:
 		print(f"{RED}slangc not found on PATH{WHITE}", file=sys.stderr)

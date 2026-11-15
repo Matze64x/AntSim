@@ -1,7 +1,7 @@
 #pragma once
 
-// Included by the files in shared/, which are Slang modules that C++ also includes as headers, so that the data both
-// sides read has a single definition. In C++ this aliases the Slang names that those files use.
+// Included by the files in modules/ that C++ also includes as headers, so that the data both sides read has a single
+// definition. In C++ this aliases the Slang names that those files use.
 
 #ifdef __SLANG__
 

@@ -1,10 +1,10 @@
 #pragma once
-#include "shared/common.slang"
+#include "modules/common.slang"
 #ifdef __SLANG__
-import shared.walls;
+import modules.walls;
 import vkte;
 #else // __SLANG__
-#include "shared/walls.slang"
+#include "modules/walls.slang"
 #include "vkte/resource_handles.hpp"
 #endif // __SLANG__
 

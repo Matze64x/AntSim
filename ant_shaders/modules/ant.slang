@@ -1,5 +1,5 @@
 #pragma once
-#include "shared/common.slang"
+#include "modules/common.slang"
 
 // in meters per second
 AS_CONSTANT float ANT_SPEED = 0.2f;

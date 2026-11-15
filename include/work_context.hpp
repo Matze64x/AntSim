@@ -4,10 +4,10 @@
 #include <vector>
 
 #include "app_state.hpp"
-#include "shared/push_constants.slang"
+#include "modules/push_constants.slang"
 #include "simulation.hpp"
 #include "ui.hpp"
-#include "shared/uniform_buffer.slang"
+#include "modules/uniform_buffer.slang"
 #include "util/timer.hpp"
 #include "glm/vec2.hpp"
 #include "vkte/engine.hpp"
