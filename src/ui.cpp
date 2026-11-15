@@ -48,6 +48,7 @@ void UI::record_window(vk::CommandBuffer& cb, AppState& app_state)
 	ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "Visualization");
 	visualization_controls("Food", app_state.visualizations.food);
 	visualization_controls("Food Trail", app_state.visualizations.food_trail);
+	visualization_controls("Home Trail", app_state.visualizations.home_trail);
 	visualization_controls("Nest", app_state.visualizations.nest);
 	visualization_controls("Wall", app_state.visualizations.wall);
 	ImGui::Text("Ants Colors");

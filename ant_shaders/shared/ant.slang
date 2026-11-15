@@ -1,6 +1,9 @@
 #pragma once
 #include "shared/common.slang"
 
+// in meters per second
+AS_CONSTANT float ANT_SPEED = 0.2f;
+
 struct Ant
 {
 	float2 pos;
@@ -9,6 +12,10 @@ struct Ant
 	// Where the ant believes the nest is. Like real ants, it adds up the way it walked (path integration), with an
 	// error that grows the farther it walks, until it smells the nest.
 	float2 nest_estimate;
+	// The meters the ant walked since it left the nest or the food: a searching ant's way home, which it shortens to that
+	// of a home trail it crosses that tells a shorter one, and a carrying ant's way from the food, which weakens the food
+	// trail it lays.
+	float distance_walked;
 	// 0 or 1, since a bool's size differs between Slang's and C++'s buffers
 	uint32_t has_food;
 };

@@ -12,7 +12,7 @@ import vkte;
 ConstantBuffer<PushConstants> pc;
 
 // Puts the push constants' food into the cell at its position, taking the slot from whatever cell had it, whose
-// trail it clears. A single thread, since it writes one cell.
+// trails it clears. A single thread, since it writes one cell.
 [shader("compute")]
 [numthreads(1, 1, 1)]
 void add_food()
@@ -25,19 +25,23 @@ void add_food()
 	{
 		cell.key = key;
 		cell.food_trail = 0.0;
+		cell.home_trail = 0;
 	}
 	cell.food_amount = pc.food_amount;
 }
 
-// Fades every cell's food trail to the start of the next trail epoch, after the last step of one. A thread per slot.
+// Ages every cell's trails to the next trail epoch, after the last step of one. A thread per slot.
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, 1, 1)]
-void fade_food_trails(uint3 dispatch_thread_id : SV_DispatchThreadID)
+void age_trails(uint3 dispatch_thread_id : SV_DispatchThreadID)
 {
 	const uint slot = dispatch_thread_id.x;
 	if (slot >= pc.hash_grid_capacity) return;
 	HashGridCell* cells = vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer();
-	cells[slot].food_trail *= get_food_trail_fade(float(FOOD_TRAIL_EPOCH_STEP_COUNT) * SIMULATION_TIME_STEP);
+	const float epoch_length = float(TRAIL_EPOCH_STEP_COUNT) * SIMULATION_TIME_STEP;
+	cells[slot].food_trail *= get_food_trail_fade(epoch_length);
+	const uint home_trail = cells[slot].home_trail;
+	if (home_trail != 0) cells[slot].home_trail = encode_home_distance(decode_home_distance(home_trail) + HOME_TRAIL_AGING_SPEED * epoch_length);
 }
 
 struct ScreenVertex
@@ -77,5 +81,8 @@ float4 fragment_main(ScreenVertex input) : SV_Target
 	// on a logarithmic scale from the faintest trail (0) to one 100 times as strong (1)
 	const float food_trail_strength = saturate(log2(hash_grid.get_food_trail(cell) / MIN_FOOD_TRAIL) / log2(100.0));
 	if (hash_grid.has_food_trail(cell) && ub.visualizations.food_trail.is_shown()) return ub.visualizations.food_trail.get_color(food_trail_strength);
+	// from no way home (0) to the nest (1)
+	const float home_trail_strength = 1.0 - hash_grid.get_home_distance(cell) / MAX_HOME_DISTANCE;
+	if (hash_grid.has_home_trail(cell) && ub.visualizations.home_trail.is_shown()) return ub.visualizations.home_trail.get_color(home_trail_strength);
 	return float4(0.0, 0.0, 0.0, 1.0);
 }

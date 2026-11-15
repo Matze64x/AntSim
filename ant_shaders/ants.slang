@@ -12,12 +12,20 @@ import vkte;
 [[vk::push_constant]]
 ConstantBuffer<PushConstants> pc;
 
-// Ants walk with a heading that drifts randomly; ants that carry no food steer toward the strongest smell of food or food
-// trail ahead, and ants that carry food steer toward where they believe the nest is, laying the food trail. Since busy
+// Ants walk with a heading that drifts randomly. Ants searching for food lay the home trail, which tells their way home,
+// and steer toward the strongest smell of food or food trail ahead; ants carrying food lay the food trail and steer toward
+// the home trail ahead that tells the shortest way home, or where they believe the nest is if they smell none. Home
+// trails tell the shortest way any searching ant knew, so they lead home along the ways ants walked, around walls too.
+// An ant lays the food trail the weaker the farther it walked from the food, so that it leads there; since busy food
 // trails grow stronger and unused ones fade, the colony converges on short ones.
 
-// in meters per second
-static const float ANT_SPEED = 0.2;
+// which trail an ant follows: the food trail leads to food, the home trail to the nest
+enum class Trail
+{
+	Food,
+	Home
+}
+
 // how fast the heading drifts randomly, in radians per square root of a second (a random walk of the heading)
 static const float WANDER_STRENGTH = 2.0;
 // how fast an ant turns toward a smell or the nest, in radians per second
@@ -28,8 +36,10 @@ static const float ANTENNA_ANGLE = radians(40.0);
 static const float ANTENNA_LENGTH = 0.1;
 // the error that path integration adds, in meters per square root of a meter walked (a random walk of the estimate)
 static const float PATH_INTEGRATION_ERROR = 0.03;
-// how far beyond the nest's edge ants smell the nest, in meters, which corrects their estimate of where it is
-static const float NEST_SCENT_DISTANCE = 0.2;
+// An ant lays the food trail half as strong for every this many meters it walked from the food. Shorter than the way an
+// ant walks while the trail fades to half (ANT_SPEED * FOOD_TRAIL_HALF_LIFE), so that along an ant's path the older
+// part, nearer to the food, stays stronger than the fresher part: the trail leads to the food, not after the ant.
+static const float FOOD_TRAIL_HALF_DISTANCE = ANT_SPEED * FOOD_TRAIL_HALF_LIFE / 2.0;
 // an ant that a wall blocks tries headings turned by multiples of this angle, the smallest first
 static const float WALL_TURN_ANGLE = radians(30.0);
 
@@ -38,49 +48,91 @@ float2 rotate(float2 v, float angle)
 	return mul(float2x2(cos(angle), -sin(angle), sin(angle), cos(angle)), v);
 }
 
-// what an antenna smells in the cells around a point; nothing in a wall
+// What an antenna smells of a trail in the cells around a point, and of where the trail leads, food for the food trail
+// and the nest for the home trail; nothing in a wall.
 struct Smell
 {
-	// the cells with food
-	uint food_cell_count;
-	float food_trail;
+	// the cells with food, or in the nest
+	uint source_cell_count;
+	bool has_trail;
+	// the larger the stronger: the food trail's amount, or the negated shortest way home that the home trail tells
+	float trail_strength;
 
-	__init(HashGrid hash_grid, Walls walls, float2 pos)
+	__init(HashGrid hash_grid, Walls walls, Nest nest, float2 pos, Trail trail)
 	{
-		food_cell_count = 0;
-		food_trail = 0.0;
+		source_cell_count = 0;
+		has_trail = false;
+		trail_strength = trail == Trail::Food ? 0.0 : -float.maxValue;
 		const int2 center = get_hash_grid_pos(pos);
 		if (walls.is_wall(center)) return;
 		for (int y = -1; y <= 1; y++)
 		{
 			for (int x = -1; x <= 1; x++)
 			{
-				const Optional<uint> slot = hash_grid.get_cell(center + int2(x, y));
+				const int2 index = center + int2(x, y);
+				if (trail == Trail::Home && distance(get_hash_grid_cell_pos(index), nest.pos) < nest.get_radius()) source_cell_count++;
+				const Optional<uint> slot = hash_grid.get_cell(index);
 				if (slot.hasValue)
 				{
 					const HashGridCell cell = hash_grid.cells[slot.value];
-					if (cell.food_amount > 0) food_cell_count++;
-					food_trail += hash_grid.get_food_trail(cell);
+					if (trail == Trail::Food)
+					{
+						if (cell.food_amount > 0) source_cell_count++;
+						has_trail = has_trail || hash_grid.has_food_trail(cell);
+						trail_strength += hash_grid.get_food_trail(cell);
+					}
+					else
+					{
+						has_trail = has_trail || hash_grid.has_home_trail(cell);
+						trail_strength = max(trail_strength, -hash_grid.get_home_distance(cell));
+					}
 				}
 			}
 		}
 	}
 
-	// food smells stronger than any trail, so that ants on a trail turn to food next to it
+	bool is_empty()
+	{
+		return source_cell_count == 0 && !has_trail;
+	}
+
+	// food or the nest smells stronger than any trail, so that ants on a trail turn to it when they pass it
 	bool is_stronger_than(Smell other)
 	{
-		return food_cell_count != other.food_cell_count ? food_cell_count > other.food_cell_count : food_trail > other.food_trail;
+		return source_cell_count != other.source_cell_count ? source_cell_count > other.source_cell_count : trail_strength > other.trail_strength;
 	}
 }
 
-// the turn, at most max_turn either way, toward the stronger smell of the antennae, none if straight ahead smells strongest
-float turn_to_smell(Ant ant, HashGrid hash_grid, Walls walls, float max_turn)
+// what an ant's antennae smell to its left, ahead and to its right
+struct Antennae
 {
-	const Smell left = Smell(hash_grid, walls, ant.pos + rotate(ant.dir, ANTENNA_ANGLE) * ANTENNA_LENGTH);
-	const Smell ahead = Smell(hash_grid, walls, ant.pos + ant.dir * ANTENNA_LENGTH);
-	const Smell right = Smell(hash_grid, walls, ant.pos + rotate(ant.dir, -ANTENNA_ANGLE) * ANTENNA_LENGTH);
-	if (!left.is_stronger_than(ahead) && !right.is_stronger_than(ahead)) return 0.0;
-	return left.is_stronger_than(right) ? max_turn : -max_turn;
+	Smell left;
+	Smell ahead;
+	Smell right;
+
+	__init(Ant ant, HashGrid hash_grid, Walls walls, Nest nest, Trail trail)
+	{
+		left = Smell(hash_grid, walls, nest, ant.pos + rotate(ant.dir, ANTENNA_ANGLE) * ANTENNA_LENGTH, trail);
+		ahead = Smell(hash_grid, walls, nest, ant.pos + ant.dir * ANTENNA_LENGTH, trail);
+		right = Smell(hash_grid, walls, nest, ant.pos + rotate(ant.dir, -ANTENNA_ANGLE) * ANTENNA_LENGTH, trail);
+	}
+
+	bool is_empty()
+	{
+		return left.is_empty() && ahead.is_empty() && right.is_empty();
+	}
+
+	bool smell_source()
+	{
+		return left.source_cell_count > 0 || ahead.source_cell_count > 0 || right.source_cell_count > 0;
+	}
+
+	// at most max_turn either way, toward the stronger smell, none if straight ahead smells strongest
+	float get_turn(float max_turn)
+	{
+		if (!left.is_stronger_than(ahead) && !right.is_stronger_than(ahead)) return 0.0;
+		return left.is_stronger_than(right) ? max_turn : -max_turn;
+	}
 }
 
 // the turn, at most max_turn either way, toward a point
@@ -139,20 +191,32 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 
 	const float max_turn = TURN_RATE * SIMULATION_TIME_STEP;
 	float turn = rng.get_float(-1.0, 1.0) * WANDER_STRENGTH * sqrt(SIMULATION_TIME_STEP);
-	turn += ant.has_food != 0 ? turn_to(ant, ant.nest_estimate, max_turn) : turn_to_smell(ant, hash_grid, walls, max_turn);
+	// searching ants follow the food trail, ants carrying food the home trail
+	const Antennae antennae = Antennae(ant, hash_grid, walls, nest, ant.has_food != 0 ? Trail::Home : Trail::Food);
+	turn += ant.has_food != 0 && antennae.is_empty() ? turn_to(ant, ant.nest_estimate, max_turn) : antennae.get_turn(max_turn);
+	// an ant carrying food that smells the nest knows where it is
+	if (ant.has_food != 0 && antennae.smell_source()) ant.nest_estimate = nest.pos;
 	ant.dir = normalize(rotate(ant.dir, turn));
 	const float step_length = ANT_SPEED * SIMULATION_TIME_STEP;
 	// an ant in a wall (painted onto it) walks out of it in any direction
 	if (!walls.is_wall(get_hash_grid_pos(ant.pos))) ant.dir = get_free_dir(ant, walls, step_length, turn >= 0.0 ? 1.0 : -1.0);
 	const float2 next_pos = ant.pos + ant.dir * step_length;
 	// unless walls enclose the ant
-	if (!walls.is_wall(get_hash_grid_pos(next_pos)) || walls.is_wall(get_hash_grid_pos(ant.pos))) ant.pos = next_pos;
+	if (!walls.is_wall(get_hash_grid_pos(next_pos)) || walls.is_wall(get_hash_grid_pos(ant.pos)))
+	{
+		ant.pos = next_pos;
+		ant.distance_walked += step_length;
+	}
 	ant.nest_estimate += rng.get_float2_in_disk() * PATH_INTEGRATION_ERROR * sqrt(step_length);
 
-	const float nest_distance = distance(ant.pos, nest.pos);
-	if (nest_distance < nest.get_radius() + NEST_SCENT_DISTANCE) ant.nest_estimate = nest.pos;
+	const bool in_nest = distance(ant.pos, nest.pos) < nest.get_radius();
+	if (in_nest)
+	{
+		ant.nest_estimate = nest.pos;
+		ant.distance_walked = 0.0;
+	}
 	// an ant that brought food home turns back to where it found it
-	if (nest_distance < nest.get_radius() && ant.has_food != 0)
+	if (in_nest && ant.has_food != 0)
 	{
 		ant.has_food = 0;
 		ant.dir = -ant.dir;
@@ -161,9 +225,9 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	ants[ant_index] = ant;
 }
 
-// An ant carrying food lays the food trail in its cell; an ant carrying none takes food from its cell if it has any and
-// turns back home. Other ants may update the same cell concurrently; cells have no locks, since every ant in a cell gets
-// to act each step.
+// An ant carrying food lays the food trail in its cell. An ant searching for food takes a shorter way home that its cell's
+// home trail tells, lays the home trail, and takes food from the cell if it has any and turns back home. Other ants may
+// update the same cell concurrently; cells have no locks, since every ant in a cell gets to act each step.
 [shader("compute")]
 [numthreads(WORKGROUP_SIZE, 1, 1)]
 void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
@@ -176,16 +240,19 @@ void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	const int2 hash_grid_pos = get_hash_grid_pos(ant.pos);
 	if (ant.has_food != 0)
 	{
-		// the seconds the ant spends in the cell this step
-		hash_grid.lay_food_trail(hash_grid_pos, SIMULATION_TIME_STEP);
+		// the seconds the ant spends in the cell this step, weakened by the distance it walked from the food
+		hash_grid.lay_food_trail(hash_grid_pos, SIMULATION_TIME_STEP * exp2(-ant.distance_walked / FOOD_TRAIL_HALF_DISTANCE));
 	}
 	else
 	{
 		const Optional<uint> slot = hash_grid.get_cell(hash_grid_pos);
+		if (slot.hasValue) ant.distance_walked = min(ant.distance_walked, hash_grid.get_home_distance(hash_grid.cells[slot.value]));
+		if (ant.distance_walked <= MAX_HOME_DISTANCE) hash_grid.lay_home_trail(hash_grid_pos, ant.distance_walked);
 		if (slot.hasValue && hash_grid.take_food(slot.value))
 		{
 			ant.has_food = 1;
 			ant.dir = -ant.dir;
+			ant.distance_walked = 0.0;
 		}
 	}
 	ants[ant_index] = ant;

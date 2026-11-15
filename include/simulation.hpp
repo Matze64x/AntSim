@@ -26,7 +26,7 @@ public:
 	// records putting the push constants' food into the cell at its position
 	void add_food(vk::CommandBuffer& cb, const PushConstants& pc);
 	// records the simulation step pc.step: moving the ants, then letting them mark and take food from the cells, and after
-	// a trail epoch's last step fading the cells' food trails to the next one's start
+	// a trail epoch's last step aging the cells' trails to the next one
 	void step(vk::CommandBuffer& cb, const PushConstants& pc);
 	// records drawing the hash grid and the nest covering the screen, and the ants on top
 	void draw(vk::CommandBuffer& cb, const PushConstants& pc);
@@ -43,7 +43,7 @@ private:
 	vkte::PipelineHandle paint_walls_pipeline;
 	vkte::PipelineHandle step_ants_pipeline;
 	vkte::PipelineHandle update_hash_grid_pipeline;
-	vkte::PipelineHandle fade_food_trails_pipeline;
+	vkte::PipelineHandle age_trails_pipeline;
 	vkte::PipelineHandle hash_grid_render_pipeline;
 	vkte::PipelineHandle ants_render_pipeline;
 

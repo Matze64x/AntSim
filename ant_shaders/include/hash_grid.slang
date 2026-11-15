@@ -36,6 +36,17 @@ float get_food_trail_fade(float seconds)
 	return exp2(-seconds / FOOD_TRAIL_HALF_LIFE);
 }
 
+// The bits of a non-negative distance order like the distances, so their complement orders reversely and isn't 0.
+uint encode_home_distance(float distance)
+{
+	return ~asuint(distance);
+}
+
+float decode_home_distance(uint home_trail)
+{
+	return asfloat(~home_trail);
+}
+
 // A compare-exchange loop, since not every GPU has float atomic adds (the Intel Iris Xe hasn't).
 void atomic_add(float* value, float addend)
 {
@@ -50,27 +61,31 @@ void atomic_add(float* value, float addend)
 }
 
 // The hash grid's cells, through a pointer, so that writing a member writes only that member. Each grid position has
-// one slot; a cell holds its position's data while it is alive, has food or a food trail that hasn't expired. A slot whose
-// cell isn't alive is free for any position, and a position whose slot holds another position's living cell is
-// wasteland, where nothing can be laid.
+// one slot; a cell holds its position's data while it is alive, has food or a trail that ants smell. A slot whose cell
+// isn't alive is free for any position, and a position whose slot holds another position's living cell is wasteland,
+// where nothing can be laid.
 struct HashGrid
 {
 	HashGridCell* cells;
 	uint capacity;
 	// how much a food trail faded since the current trail epoch started, which turns the stored trails into current ones
-	float fade;
+	float food_trail_fade;
+	// how much a home trail will still age until the current trail epoch ends, which turns the stored ones into current ones
+	float home_trail_aging;
 
 	// of the simulation step
 	__init(HashGridCell* cells, uint capacity, uint step)
 	{
 		this.cells = cells;
 		this.capacity = capacity;
-		fade = get_food_trail_fade(float(step % FOOD_TRAIL_EPOCH_STEP_COUNT) * SIMULATION_TIME_STEP);
+		const uint epoch_step = step % TRAIL_EPOCH_STEP_COUNT;
+		food_trail_fade = get_food_trail_fade(float(epoch_step) * SIMULATION_TIME_STEP);
+		home_trail_aging = HOME_TRAIL_AGING_SPEED * float(TRAIL_EPOCH_STEP_COUNT - epoch_step) * SIMULATION_TIME_STEP;
 	}
 
 	float get_food_trail(HashGridCell cell)
 	{
-		return cell.food_trail * fade;
+		return cell.food_trail * food_trail_fade;
 	}
 
 	bool has_food_trail(HashGridCell cell)
@@ -78,9 +93,22 @@ struct HashGrid
 		return get_food_trail(cell) >= MIN_FOOD_TRAIL;
 	}
 
+	// the way home that the cell's home trail tells, float.maxValue if it has none that ants smell
+	float get_home_distance(HashGridCell cell)
+	{
+		if (cell.home_trail == 0) return float.maxValue;
+		const float distance = decode_home_distance(cell.home_trail) - home_trail_aging;
+		return distance <= MAX_HOME_DISTANCE ? distance : float.maxValue;
+	}
+
+	bool has_home_trail(HashGridCell cell)
+	{
+		return get_home_distance(cell) != float.maxValue;
+	}
+
 	bool is_alive(HashGridCell cell)
 	{
-		return cell.food_amount > 0 || has_food_trail(cell);
+		return cell.food_amount > 0 || has_food_trail(cell) || has_home_trail(cell);
 	}
 
 	uint get_slot(int2 index)
@@ -97,7 +125,7 @@ struct HashGrid
 	}
 
 	// The slot of the index's cell, which takes the slot if its cell isn't alive; none if the index is wasteland. A cell
-	// that isn't alive has no food and at most a trail too faint to smell, which the new index may as well keep.
+	// that isn't alive has no food and at most trails that ants don't smell, which the new index may as well keep.
 	Optional<uint> claim_cell(int2 index)
 	{
 		const uint slot = get_slot(index);
@@ -116,7 +144,16 @@ struct HashGrid
 	void lay_food_trail(int2 index, float amount)
 	{
 		const Optional<uint> slot = claim_cell(index);
-		if (slot.hasValue) atomic_add(&cells[slot.value].food_trail, amount / fade);
+		if (slot.hasValue) atomic_add(&cells[slot.value].food_trail, amount / food_trail_fade);
+	}
+
+	// the home trail in the index's cell tells at most the way home unless the index is wasteland
+	void lay_home_trail(int2 index, float distance)
+	{
+		const Optional<uint> slot = claim_cell(index);
+		if (!slot.hasValue) return;
+		Atomic<uint32_t>* home_trail = (Atomic<uint32_t>*)&cells[slot.value].home_trail;
+		home_trail.max(encode_home_distance(distance + home_trail_aging));
 	}
 
 	// takes one food from the slot's cell if it has any left

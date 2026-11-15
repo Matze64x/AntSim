@@ -24,6 +24,7 @@ struct Visualizations
 {
 	Visualization food;
 	Visualization food_trail;
+	Visualization home_trail;
 	Visualization nest;
 	Visualization wall;
 	float3 ant_wo_food_color;

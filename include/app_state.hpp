@@ -18,6 +18,8 @@ inline Visualizations get_default_visualizations()
 	visualizations.food = Visualization{.color = glm::vec3(0.0f), .color_map = ColorMap::Viridis};
 	// dark cyan
 	visualizations.food_trail = Visualization{.color = glm::vec3(0.0f, 0.4f, 0.4f), .color_map = ColorMap::CustomColor};
+	// dark blue
+	visualizations.home_trail = Visualization{.color = glm::vec3(0.0f, 0.0f, 0.4f), .color_map = ColorMap::CustomColor};
 	visualizations.nest = Visualization{.color = glm::vec3(0.0f), .color_map = ColorMap::Plasma};
 	visualizations.wall = Visualization{.color = glm::vec3(0.45f), .color_map = ColorMap::CustomColor};
 	// blue with a pink leading edge
