@@ -54,6 +54,8 @@ struct Smell
 {
 	// the cells with food, or in the nest
 	uint source_cell_count;
+	// of these cells the one nearest to the point, if any
+	float2 nearest_source_pos;
 	bool has_trail;
 	// the larger the stronger: the food trail's amount, or the negated shortest way home that the home trail tells
 	float trail_strength;
@@ -61,6 +63,7 @@ struct Smell
 	__init(HashGrid hash_grid, Walls walls, Nest nest, float2 pos, Trail trail)
 	{
 		source_cell_count = 0;
+		nearest_source_pos = pos;
 		has_trail = false;
 		trail_strength = trail == Trail::Food ? 0.0 : -float.maxValue;
 		const int2 center = get_hash_grid_pos(pos);
@@ -70,14 +73,14 @@ struct Smell
 			for (int x = -1; x <= 1; x++)
 			{
 				const int2 index = center + int2(x, y);
-				if (trail == Trail::Home && distance(get_hash_grid_cell_pos(index), nest.pos) < nest.get_radius()) source_cell_count++;
+				if (trail == Trail::Home && distance(get_hash_grid_cell_pos(index), nest.pos) < nest.get_radius()) add_source_cell(index, pos);
 				const Optional<uint> slot = hash_grid.get_cell(index);
 				if (slot.hasValue)
 				{
 					const HashGridCell cell = hash_grid.cells[slot.value];
 					if (trail == Trail::Food)
 					{
-						if (cell.food_amount > 0) source_cell_count++;
+						if (cell.food_amount > 0) add_source_cell(index, pos);
 						has_trail = has_trail || hash_grid.has_food_trail(cell);
 						trail_strength += hash_grid.get_food_trail(cell);
 					}
@@ -89,6 +92,13 @@ struct Smell
 				}
 			}
 		}
+	}
+
+	[mutating] void add_source_cell(int2 index, float2 pos)
+	{
+		const float2 cell_pos = get_hash_grid_cell_pos(index);
+		if (source_cell_count == 0 || distance(cell_pos, pos) < distance(nearest_source_pos, pos)) nearest_source_pos = cell_pos;
+		source_cell_count++;
 	}
 
 	bool is_empty()
@@ -122,9 +132,17 @@ struct Antennae
 		return left.is_empty() && ahead.is_empty() && right.is_empty();
 	}
 
-	bool smell_source()
+	// of the cells with food, or in the nest, that the antennae smell, the one nearest to the ant, if any
+	Optional<float2> get_nearest_source_pos(float2 ant_pos)
 	{
-		return left.source_cell_count > 0 || ahead.source_cell_count > 0 || right.source_cell_count > 0;
+		Optional<float2> nearest = none;
+		for (int i = 0; i < 3; i++)
+		{
+			const Smell smell = i == 0 ? left : (i == 1 ? ahead : right);
+			if (smell.source_cell_count == 0) continue;
+			if (!nearest.hasValue || distance(smell.nearest_source_pos, ant_pos) < distance(nearest.value, ant_pos)) nearest = smell.nearest_source_pos;
+		}
+		return nearest;
 	}
 
 	// at most max_turn either way, toward the stronger smell, none if straight ahead smells strongest
@@ -193,9 +211,13 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	float turn = rng.get_float(-1.0, 1.0) * WANDER_STRENGTH * sqrt(SIMULATION_TIME_STEP);
 	// searching ants follow the food trail, ants carrying food the home trail
 	const Antennae antennae = Antennae(ant, hash_grid, walls, nest, ant.has_food != 0 ? Trail::Home : Trail::Food);
-	turn += ant.has_food != 0 && antennae.is_empty() ? turn_to(ant, ant.nest_estimate, max_turn) : antennae.get_turn(max_turn);
+	// an ant that smells where its trail leads, food or the nest, heads straight there
+	const Optional<float2> source_pos = antennae.get_nearest_source_pos(ant.pos);
+	if (source_pos.hasValue) turn += turn_to(ant, source_pos.value, max_turn);
+	else if (ant.has_food != 0 && antennae.is_empty()) turn += turn_to(ant, ant.nest_estimate, max_turn);
+	else turn += antennae.get_turn(max_turn);
 	// an ant carrying food that smells the nest knows where it is
-	if (ant.has_food != 0 && antennae.smell_source()) ant.nest_estimate = nest.pos;
+	if (ant.has_food != 0 && source_pos.hasValue) ant.nest_estimate = nest.pos;
 	ant.dir = normalize(rotate(ant.dir, turn));
 	const float step_length = ANT_SPEED * SIMULATION_TIME_STEP;
 	// an ant in a wall (painted onto it) walks out of it in any direction
