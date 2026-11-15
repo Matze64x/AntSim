@@ -1,5 +1,6 @@
 #include "simulation.hpp"
 #include <string>
+#include <span>
 #include "glm/common.hpp"
 #include "modules/ant.slang"
 #include "modules/hash_grid.slang"
@@ -51,6 +52,15 @@ void Simulation::declare_resources(vkte::ResourceDeclarations& declarations, vkt
 	nest_buffer = add_buffer(memory_manager, "nest_buffer", sizeof(Nest), 1);
 	hash_grid_buffer = add_buffer(memory_manager, "hash_grid_buffer", sizeof(HashGridCell), hash_grid_capacity);
 	walls_buffer = add_buffer(memory_manager, "walls_buffer", sizeof(uint32_t), WALL_WORD_COUNT);
+	// empty until a map is loaded
+	const std::vector<HashGridCell> empty_hash_grid(hash_grid_capacity, HashGridCell{});
+	vkte::Buffer::Settings initial_hash_grid_settings;
+	initial_hash_grid_settings.initial_data = std::as_bytes(std::span(empty_hash_grid));
+	initial_hash_grid_settings.element_count = hash_grid_capacity;
+	initial_hash_grid_settings.usage_flags = vk::BufferUsageFlagBits::eStorageBuffer;
+	initial_hash_grid_settings.location = vkte::MemoryLocation::DeviceLocal;
+	initial_hash_grid_settings.queues = QueueFamilyFlags::Transfer | QueueFamilyFlags::Graphics;
+	initial_hash_grid_buffer = memory_manager.add_bindless_buffer("initial_hash_grid_buffer", initial_hash_grid_settings);
 	add_food_pipeline = add_compute_pipeline(declarations, "world_shaders.slang", "add_food");
 	paint_walls_pipeline = add_compute_pipeline(declarations, "world_shaders.slang", "paint_walls");
 	step_ants_pipeline = add_compute_pipeline(declarations, "ants_shaders.slang", "step_ants");
@@ -62,7 +72,7 @@ void Simulation::declare_resources(vkte::ResourceDeclarations& declarations, vkt
 
 void Simulation::destruct(vkte::MemoryManager& memory_manager)
 {
-	for (vkte::BufferHandle* buffer : {&ants_buffer, &nest_buffer, &hash_grid_buffer, &walls_buffer})
+	for (vkte::BufferHandle* buffer : {&ants_buffer, &nest_buffer, &hash_grid_buffer, &walls_buffer, &initial_hash_grid_buffer})
 	{
 		if (buffer->valid()) memory_manager.destroy(*buffer);
 		*buffer = vkte::BufferHandle();
@@ -86,13 +96,21 @@ PushConstants Simulation::get_push_constants(vkte::BufferHandle uniform_buffer, 
 	return pc;
 }
 
+void Simulation::set_map(const Map& map)
+{
+	vkte::MemoryManager& memory_manager = engine.get_memory_manager();
+	memory_manager.get_buffer(walls_buffer).update_data_bytes(map.walls.data(), map.walls.size() * sizeof(uint32_t));
+	memory_manager.get_buffer(initial_hash_grid_buffer).update_data_bytes(map.hash_grid.data(), map.hash_grid.size() * sizeof(HashGridCell));
+	initial_nest = map.nest;
+}
+
 void Simulation::reset(vk::CommandBuffer& cb)
 {
-	static constexpr Nest initial_nest{.pos = glm::vec2(0.0f, 0.0f), .level = 1, .food_amount = 0};
 	vkte::MemoryManager& memory_manager = engine.get_memory_manager();
 	cb.fillBuffer(memory_manager.get_buffer(ants_buffer).get(), 0, vk::WholeSize, 0);
 	cb.updateBuffer(memory_manager.get_buffer(nest_buffer).get(), 0, sizeof(initial_nest), &initial_nest);
-	cb.fillBuffer(memory_manager.get_buffer(hash_grid_buffer).get(), 0, vk::WholeSize, 0);
+	const vk::BufferCopy hash_grid_copy(0, 0, hash_grid_capacity * sizeof(HashGridCell));
+	cb.copyBuffer(memory_manager.get_buffer(initial_hash_grid_buffer).get(), memory_manager.get_buffer(hash_grid_buffer).get(), hash_grid_copy);
 	transfer_to_compute_barrier(cb);
 }
 

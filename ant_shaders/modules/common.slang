@@ -6,6 +6,8 @@
 #ifdef __SLANG__
 
 #define AS_CONSTANT static const
+// a free function that both sides use
+#define AS_FUNCTION
 
 #else // __SLANG__
 
@@ -13,6 +15,7 @@
 #include "glm/vec2.hpp"
 #include "glm/vec3.hpp"
 #define AS_CONSTANT inline constexpr
+#define AS_FUNCTION inline
 
 using float2 = glm::vec2;
 using float3 = glm::vec3;

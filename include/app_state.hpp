@@ -58,6 +58,8 @@ struct AppState
 	Visualizations visualizations = get_default_visualizations();
 	glm::vec2 add_food_pos = glm::vec2(0.0f, 0.0f);
 	int32_t add_food_amount = 0;
+	// the food that the right mouse button puts into a cell
+	int32_t food_brush_amount = 1000;
 	RightMouseTool right_mouse_tool = RightMouseTool::AddFood;
 	// what the right mouse button painted or erased of the walls since the last frame
 	WallStroke wall_stroke{.from = glm::vec2(0.0f), .to = glm::vec2(0.0f), .radius = 0.06f, .brush = WallBrush::None};

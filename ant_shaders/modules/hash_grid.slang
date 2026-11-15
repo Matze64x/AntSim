@@ -40,6 +40,30 @@ struct HashGridCell
 	uint32_t home_trail;
 };
 
+// http://burtleburtle.net/bob/hash/integer.html
+AS_FUNCTION uint32_t hash_jenkins32(uint32_t a)
+{
+	a = (a + 0x7ed55d16u) + (a << 12u);
+	a = (a ^ 0xc761c23cu) ^ (a >> 19u);
+	a = (a + 0x165667b1u) + (a << 5u);
+	a = (a + 0xd3a2646cu) ^ (a << 9u);
+	a = (a + 0xfd7046c5u) + (a << 3u);
+	a = (a ^ 0xb55a4f09u) ^ (a >> 16u);
+	return a;
+}
+
+// a grid position as the key that identifies its cell; 16 bits per axis, which hold the positions within the world's bound
+AS_FUNCTION uint32_t get_hash_grid_key(int2 index)
+{
+	return (uint32_t(index.x) & 0xffffu) | (uint32_t(index.y) << 16u);
+}
+
+// the slot of a grid position in a hash grid with the capacity
+AS_FUNCTION uint32_t get_hash_grid_slot(int2 index, uint32_t capacity)
+{
+	return (hash_jenkins32(uint32_t(index.x) ^ 0xcf5ae914u) ^ hash_jenkins32(uint32_t(index.y))) % capacity;
+}
+
 #ifdef __SLANG__
 
 int2 get_hash_grid_pos(float2 position)
@@ -51,24 +75,6 @@ int2 get_hash_grid_pos(float2 position)
 float2 get_hash_grid_cell_pos(int2 hash_grid_pos)
 {
 	return float2(hash_grid_pos) * HASH_GRID_CELL_LENGTH + HASH_GRID_CELL_LENGTH / 2.0;
-}
-
-// http://burtleburtle.net/bob/hash/integer.html
-uint hash_jenkins32(uint a)
-{
-	a = (a + 0x7ed55d16) + (a << 12);
-	a = (a ^ 0xc761c23c) ^ (a >> 19);
-	a = (a + 0x165667b1) + (a << 5);
-	a = (a + 0xd3a2646c) ^ (a << 9);
-	a = (a + 0xfd7046c5) + (a << 3);
-	a = (a ^ 0xb55a4f09) ^ (a >> 16);
-	return a;
-}
-
-// a grid position as the key that identifies its cell; 16 bits per axis, which hold the positions within the world's bound
-uint get_hash_grid_key(int2 index)
-{
-	return (uint(index.x) & 0xffffu) | (uint(index.y) << 16u);
 }
 
 // how much a food trail fades in the seconds
@@ -154,7 +160,7 @@ struct HashGrid
 
 	uint get_slot(int2 index)
 	{
-		return (hash_jenkins32(uint(index.x) ^ 0xcf5ae914u) ^ hash_jenkins32(uint(index.y))) % capacity;
+		return get_hash_grid_slot(index, capacity);
 	}
 
 	// the slot of the index's cell, none if it has none

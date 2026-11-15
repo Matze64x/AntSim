@@ -2,6 +2,7 @@
 #include <array>
 #include <string>
 #include "imgui.h"
+#include "map.hpp"
 #include "modules/push_constants.slang"
 #include "backends/imgui_impl_sdl3.h"
 
@@ -63,6 +64,11 @@ void UI::record_window(vk::CommandBuffer& cb, AppState& app_state)
 	int right_mouse_tool = int(app_state.right_mouse_tool);
 	ImGui::PushItemWidth(120.0f);
 	if (ImGui::Combo("Right Mouse", &right_mouse_tool, right_mouse_tools.data(), int(right_mouse_tools.size()))) app_state.right_mouse_tool = RightMouseTool(right_mouse_tool);
+	// 64 bits, since ImGui's 32-bit sliders end at 2^30 - 1
+	static constexpr int64_t min_food_amount = 1;
+	static constexpr int64_t max_food_amount = int64_t(1) << int(MAX_FOOD_EXPONENT);
+	int64_t food_amount = app_state.food_brush_amount;
+	if (ImGui::SliderScalar("Food Amount", ImGuiDataType_S64, &food_amount, &min_food_amount, &max_food_amount, "%lld", ImGuiSliderFlags_Logarithmic)) app_state.food_brush_amount = int32_t(food_amount);
 	ImGui::SliderFloat("Wall Brush Radius", &app_state.wall_stroke.radius, 0.02f, 0.5f, "%.2f m");
 	ImGui::PopItemWidth();
 	ImGui::Separator();

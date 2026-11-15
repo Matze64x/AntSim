@@ -24,7 +24,7 @@ static void dispatch_pressed_keys(vkte::EventHandler& event_handler, AppState& a
 		if (app_state.right_mouse_tool == RightMouseTool::AddFood)
 		{
 			app_state.add_food_pos = cursor_world_pos;
-			app_state.add_food_amount = 255;
+			app_state.add_food_amount = app_state.food_brush_amount;
 		}
 		else
 		{
@@ -68,6 +68,12 @@ int run_application(const ApplicationSettings& settings)
 	vkte::Engine engine(engine_settings);
 	WorkContext wc(engine, app_state);
 	vkte::EventHandler event_handler;
+	if (!settings.map_path.empty())
+	{
+		if (!wc.load_map(settings.map_path)) return 1;
+		// the first frame keeps the map's walls
+		app_state.clear_walls = false;
+	}
 
 	bool quit = false;
 	SDL_Event e;

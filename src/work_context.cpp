@@ -137,6 +137,16 @@ glm::ivec2 WorkContext::resize(const vkte::PresentSettings& present_settings)
 	return glm::ivec2(swapchain_extent.width, swapchain_extent.height);
 }
 
+bool WorkContext::load_map(const std::filesystem::path& path)
+{
+	const std::optional<Map> map = ::load_map(path, simulation.get_hash_grid_capacity());
+	if (!map.has_value()) return false;
+	engine.wait_idle();
+	simulation.set_map(map.value());
+	antlog::info("Loaded the map {}", path.string());
+	return true;
+}
+
 bool WorkContext::reload_shaders()
 {
 	engine.wait_idle();

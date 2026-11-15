@@ -203,6 +203,7 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	// a new ant leaves the nest in a random direction
 	if (all(ant.dir == 0.0))
 	{
+		ant.pos = nest.pos;
 		ant.dir = rotate(float2(1.0, 0.0), rng.get_float(0.0, 2.0 * float.getPi()));
 		ant.nest_estimate = nest.pos;
 	}

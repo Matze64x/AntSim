@@ -24,9 +24,12 @@ add_subdirectory(${VKTE_DIR})
 
 set(SOURCE_FILES
 	src/application.cpp
+	src/map.cpp
 	src/simulation.cpp
 	src/ui.cpp
 	src/work_context.cpp
+	dependencies/stb/stb_image.cpp
+	dependencies/stb/stb_image_write.cpp
 )
 
 add_executable(AntSim src/main.cpp ${SOURCE_FILES})

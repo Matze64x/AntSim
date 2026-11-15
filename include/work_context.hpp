@@ -28,6 +28,8 @@ public:
 	glm::ivec2 resize(const vkte::PresentSettings& present_settings);
 	// recompiles every shader; returns false, keeping the old ones, if any failed to compile
 	bool reload_shaders();
+	// makes the map at the path the simulation's start; returns false if it can't be loaded
+	bool load_map(const std::filesystem::path& path);
 
 private:
 	vkte::Engine& engine;

@@ -44,5 +44,7 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 	antlog::info("Using shader directory: {}", settings.shader_dir);
+	// usage: AntSim [map.png]
+	if (argc > 1) settings.map_path = argv[1];
 	return run_application(settings);
 }
