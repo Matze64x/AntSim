@@ -23,8 +23,14 @@ ConstantBuffer<PushConstants> pc;
 // a shorter way shortens them. Some ants explore for a while instead of following the trails (see
 // BehaviorSettings::explorer_share).
 
-// how fast the heading drifts randomly, in radians per square root of a second (a random walk of the heading)
-static const float WANDER_STRENGTH = 2.0;
+// How far an ant walks before its heading has drifted randomly away from where it started, in meters. Real foraging ants
+// walk fairly straight: an ant that turns often only wanders around where it is, so the distance it gets grows only with
+// the square root of the way it walks, while a straight one gets as far as it walks.
+static const float HEADING_PERSISTENCE_LENGTH = 2.0;
+// How fast the heading drifts randomly, in radians per square root of a second (a random walk of the heading). A turn of
+// up to that strength each second turns the heading by a variance of WANDER_STRENGTH² / 3 per second, so its direction
+// lasts 6 / WANDER_STRENGTH² seconds.
+static const float WANDER_STRENGTH = sqrt(6.0 * ANT_SPEED / HEADING_PERSISTENCE_LENGTH);
 // how fast an ant turns toward a smell or the nest, in radians per second
 static const float TURN_RATE = 6.0;
 // an ant's antennae smell to the left and the right of its heading at this angle, and straight ahead
@@ -35,6 +41,10 @@ static const float ANTENNA_LENGTH = 0.1;
 static const float PATH_INTEGRATION_ERROR = 0.03;
 // an ant that a wall blocks tries headings turned by multiples of this angle, the smallest first
 static const float WALL_TURN_ANGLE = radians(30.0);
+// An ant that a wall blocks slides along it but keeps heading into it by up to this angle, so that it keeps pressing
+// against the wall: it follows the wall around corners and through the first opening on that side, and leaves it when its
+// heading drifts away from it.
+static const float WALL_PRESS_ANGLE = radians(45.0);
 
 float2 rotate(float2 v, float angle)
 {
@@ -238,8 +248,15 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	ant.dir = normalize(rotate(ant.dir, turn));
 	const float step_length = ANT_SPEED * SIMULATION_TIME_STEP;
 	// an ant in a wall (painted onto it) walks out of it in any direction
-	if (!walls.is_wall(get_hash_grid_pos(ant.pos))) ant.dir = get_free_dir(ant, walls, step_length, turn >= 0.0 ? 1.0 : -1.0);
-	const float2 next_pos = ant.pos + ant.dir * step_length;
+	float2 step_dir = ant.dir;
+	if (!walls.is_wall(get_hash_grid_pos(ant.pos)))
+	{
+		step_dir = get_free_dir(ant, walls, step_length, turn >= 0.0 ? 1.0 : -1.0);
+		// see WALL_PRESS_ANGLE
+		const float press_angle = atan2(step_dir.x * ant.dir.y - step_dir.y * ant.dir.x, dot(step_dir, ant.dir));
+		ant.dir = rotate(step_dir, clamp(press_angle, -WALL_PRESS_ANGLE, WALL_PRESS_ANGLE));
+	}
+	const float2 next_pos = ant.pos + step_dir * step_length;
 	// unless walls enclose the ant
 	if (!walls.is_wall(get_hash_grid_pos(next_pos)) || walls.is_wall(get_hash_grid_pos(ant.pos)))
 	{
