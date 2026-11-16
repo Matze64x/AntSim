@@ -15,12 +15,13 @@ ConstantBuffer<PushConstants> pc;
 // Ants walk with a heading that drifts randomly. Ants searching for food lay the home trail, which tells their way home,
 // and steer toward food or the food trail ahead that tells the shortest way to food, or, smelling none, away from the
 // home trail: toward where it tells the longest way home or where there is none, so that they explore farther out and
-// where no ant has been. Ants carrying food lay the food trail, which tells their
-// way from the food, and steer toward the nest or the home trail ahead that tells the shortest way home, or where they
-// believe the nest is if they smell none. A searching ant gives up the more likely the longer its way home is, and heads
-// home like a carrying one, taking food that it comes across on the way. A trail tells the shortest way that any ant knew, and
-// an ant takes a shorter way that its cell's trail tells, so trails lead along the shortest ways ants walked, around
-// walls too, and any ant that strays onto a shorter way shortens them.
+// where no ant has been. Ants carrying food lay the food trail, which tells their way from the food, and steer toward the
+// nest or the home trail ahead that tells the shortest way home, or where they believe the nest is if they smell none. A
+// searching ant gives up the more likely the longer its way home is, and heads home like a carrying one, taking food that
+// it comes across on the way. A trail tells the shortest way that any ant knew, and an ant takes a shorter way that its
+// cell's trail tells, so trails lead along the shortest ways ants walked, around walls too, and any ant that strays onto
+// a shorter way shortens them. Some ants explore for a while instead of following the trails (see
+// BehaviorSettings::explorer_share).
 
 // how fast the heading drifts randomly, in radians per square root of a second (a random walk of the heading)
 static const float WANDER_STRENGTH = 2.0;
@@ -69,7 +70,7 @@ struct Smell
 			{
 				const int2 index = center + int2(x, y);
 				const float2 cell_pos = get_hash_grid_cell_pos(index);
-				if (distance(cell_pos, nest.pos) < nest.get_radius()) add_cell(cell_pos, pos, nest_cell_count, nearest_nest_pos);
+				if (all(index == get_hash_grid_pos(nest.pos))) add_cell(cell_pos, pos, nest_cell_count, nearest_nest_pos);
 				const Optional<uint> slot = hash_grid.get_cell(index);
 				if (!slot.hasValue) continue;
 				const HashGridCell cell = hash_grid.cells[slot.value];
@@ -173,6 +174,12 @@ float2 get_free_dir(Ant ant, Walls walls, float step_length, float side)
 	return -ant.dir;
 }
 
+// an ant that leaves the nest or picks up food explores on its way with the chance BehaviorSettings::explorer_share
+float get_exploration(BehaviorSettings behavior, inout Random rng)
+{
+	return rng.get_float() < behavior.explorer_share ? behavior.search_distance : 0.0;
+}
+
 // The ant puts down its food, and the nest grows to the level of its food. The level follows from the food that this
 // ant's delivery made, by an atomic maximum, so that deliveries in the same dispatch can't skip a level.
 void deliver_food(Nest* nest)
@@ -195,6 +202,7 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, pc.step);
 	const Walls walls = Walls(vkte::get_buffer<uint32_t>(pc.walls).get_pointer());
 	Random rng = Random(ant_index + pc.ant_count * pc.step + 27349843);
+	const BehaviorSettings behavior = vkte::get_single_element_buffer<UniformBufferData>(pc.uniform_buffer).behavior;
 	Ant ant = ants[ant_index];
 	// a new ant leaves the nest in a random direction
 	if (all(ant.dir == 0.0))
@@ -202,11 +210,11 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 		ant.pos = nest.pos;
 		ant.dir = rotate(float2(1.0, 0.0), rng.get_float(0.0, 2.0 * float.getPi()));
 		ant.nest_estimate = nest.pos;
+		ant.exploration_left = get_exploration(behavior, rng);
 	}
 
 	// see BehaviorSettings::search_distance
-	const float search_distance = vkte::get_single_element_buffer<UniformBufferData>(pc.uniform_buffer).behavior.search_distance;
-	const float give_up_chance = 2.0 * ant.distance_walked * ANT_SPEED * SIMULATION_TIME_STEP / (search_distance * search_distance);
+	const float give_up_chance = 2.0 * ant.distance_walked * ANT_SPEED * SIMULATION_TIME_STEP / (behavior.search_distance * behavior.search_distance);
 	if (ant.state == AntState::Search && rng.get_float() < give_up_chance) ant.state = AntState::GiveUp;
 	const bool heads_home = ant.state != AntState::Search;
 
@@ -218,9 +226,13 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	// an ant that smells where its trail leads, food or the nest, heads straight there
 	const Optional<float2> source_pos = antennae.get_nearest_source_pos(trail, ant.pos);
 	if (source_pos.hasValue) turn += turn_to(ant, source_pos.value, max_turn);
-	else if (antennae.smell_trail(trail)) turn += antennae.get_turn(trail, false, max_turn);
-	else if (heads_home) turn += turn_to(ant, ant.nest_estimate, max_turn);
-	else turn += antennae.get_turn(Trail::Home, true, max_turn);
+	// an explorer just walks randomly
+	else if (ant.exploration_left <= 0.0)
+	{
+		if (antennae.smell_trail(trail)) turn += antennae.get_turn(trail, false, max_turn);
+		else if (heads_home) turn += turn_to(ant, ant.nest_estimate, max_turn);
+		else turn += antennae.get_turn(Trail::Home, true, max_turn);
+	}
 	// an ant heading home that smells the nest knows where it is
 	if (heads_home && source_pos.hasValue) ant.nest_estimate = nest.pos;
 	ant.dir = normalize(rotate(ant.dir, turn));
@@ -233,10 +245,12 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	{
 		ant.pos = next_pos;
 		ant.distance_walked += step_length;
+		ant.exploration_left = max(ant.exploration_left - step_length, 0.0);
 	}
 	ant.nest_estimate += rng.get_float2_in_disk() * PATH_INTEGRATION_ERROR * sqrt(step_length);
 
-	const bool in_nest = distance(ant.pos, nest.pos) < nest.get_radius();
+	// the nest is a point, its cell, so that all ways to it meet there and ants leaving it find any of them
+	const bool in_nest = all(get_hash_grid_pos(ant.pos) == get_hash_grid_pos(nest.pos));
 	if (in_nest)
 	{
 		ant.nest_estimate = nest.pos;
@@ -248,6 +262,7 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 		if (ant.state == AntState::CarryFood) deliver_food(nest_pointer);
 		ant.state = AntState::Search;
 		ant.dir = -ant.dir;
+		ant.exploration_left = get_exploration(behavior, rng);
 	}
 	ants[ant_index] = ant;
 }
@@ -263,12 +278,17 @@ void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	if (ant_index >= pc.ant_count) return;
 	vkte::Buffer<Ant> ants = vkte::get_buffer<Ant>(pc.ants);
 	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, pc.step);
+	const BehaviorSettings behavior = vkte::get_single_element_buffer<UniformBufferData>(pc.uniform_buffer).behavior;
+	Random rng = Random(ant_index + pc.ant_count * pc.step + 43598763);
 	Ant ant = ants[ant_index];
 	const int2 hash_grid_pos = get_hash_grid_pos(ant.pos);
 	// the trail that leads back where the ant came from
 	const Trail trail = ant.state == AntState::CarryFood ? Trail::Food : Trail::Home;
 	const Optional<uint> slot = hash_grid.get_cell(hash_grid_pos);
-	if (slot.hasValue) ant.distance_walked = min(ant.distance_walked, hash_grid.get_trail_distance(hash_grid.cells[slot.value], trail));
+	// The cell's trail tells the way from anywhere in the cell, which may be up to the cell's diagonal shorter than from
+	// where the ant is. Without that margin, an ant would take the slightly shorter way that it laid itself a step before in
+	// the same cell, and its way would grow only as fast as trails age instead of as fast as it walks.
+	if (slot.hasValue) ant.distance_walked = min(ant.distance_walked, hash_grid.get_trail_distance(hash_grid.cells[slot.value], trail) + sqrt(2.0) * HASH_GRID_CELL_LENGTH);
 	if (ant.distance_walked <= MAX_TRAIL_DISTANCE) hash_grid.lay_trail(hash_grid_pos, trail, ant.distance_walked);
 	if (ant.state != AntState::CarryFood)
 	{
@@ -277,6 +297,7 @@ void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 			ant.state = AntState::CarryFood;
 			ant.dir = -ant.dir;
 			ant.distance_walked = 0.0;
+			ant.exploration_left = get_exploration(behavior, rng);
 		}
 	}
 	ants[ant_index] = ant;

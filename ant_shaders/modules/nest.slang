@@ -12,6 +12,7 @@ struct Nest
 
 extension Nest
 {
+	// how large the nest is drawn; for the ants, it is a point (its cell)
 	float get_radius()
 	{
 		return pow(1.2, float(level - 1)) / 100.0 + 0.04;

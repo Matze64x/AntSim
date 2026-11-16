@@ -11,8 +11,9 @@ import modules.push_constants;
 AS_CONSTANT float HASH_GRID_CELL_LENGTH = 0.04f;
 
 // The way that a trail tells grows by this many meters per second. Slower than ants walk, so that along an ant's path the
-// older part, nearer to where it came from, still tells the shorter way.
-AS_CONSTANT float TRAIL_AGING_SPEED = ANT_SPEED / 2.0f;
+// older part, nearer to where it came from, still tells the shorter way, and slow, so that a shorter way that few ants
+// found keeps its advantage until more ants use it.
+AS_CONSTANT float TRAIL_AGING_SPEED = ANT_SPEED / 10.0f;
 // ants ignore trails that tell a longer way than this, in meters
 AS_CONSTANT float MAX_TRAIL_DISTANCE = 50.0f;
 // Cells store their trails as of a trail epoch, which this many steps make up; after the last one, a pass ages every

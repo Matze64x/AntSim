@@ -55,6 +55,7 @@ void UI::record_window(vk::CommandBuffer& cb, AppState& app_state)
 	section("Behavior");
 	// beyond the trails' reach, ants can't find their way home along them
 	ImGui::SliderFloat("Search Distance", &app_state.behavior.search_distance, 1.0f, MAX_TRAIL_DISTANCE, "%.0f m", ImGuiSliderFlags_Logarithmic);
+	ImGui::SliderFloat("Explorer Share", &app_state.behavior.explorer_share, 0.0f, 1.0f, "%.2f");
 
 	section("Tools");
 	static constexpr std::array<const char*, 3> right_mouse_tools{"Add Food", "Paint Wall", "Erase Wall"};

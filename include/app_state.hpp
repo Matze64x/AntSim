@@ -56,7 +56,7 @@ struct View
 struct AppState
 {
 	Visualizations visualizations = get_default_visualizations();
-	BehaviorSettings behavior{.search_distance = 20.0f};
+	BehaviorSettings behavior{.search_distance = 20.0f, .explorer_share = 0.1f};
 	glm::vec2 add_food_pos = glm::vec2(0.0f, 0.0f);
 	int32_t add_food_amount = 0;
 	// the food that the right mouse button puts into a cell
@@ -65,7 +65,7 @@ struct AppState
 	// what the right mouse button painted or erased of the walls since the last frame
 	WallStroke wall_stroke{.from = glm::vec2(0.0f), .to = glm::vec2(0.0f), .radius = 0.06f, .brush = WallBrush::None};
 	View view;
-	const uint32_t ant_count = 1'00;
+	const uint32_t ant_count = 100'000;
 	const uint32_t hash_grid_capacity = 100'000;
 	uint32_t total_frames = 0;
 	std::array<float, TIMER_COUNT> device_timings{};
