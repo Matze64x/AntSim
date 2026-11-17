@@ -46,10 +46,9 @@ struct BehaviorSettings
 	// exp(-(d / search_distance)^2): half the ants give up within 0.83 search_distance, the farther out the likelier, but
 	// not all at once.
 	float search_distance;
-	// The chance that an ant becomes an explorer when it leaves the nest or picks up food. Explorers don't follow the trails
-	// but walk randomly (until they smell food or the nest, where they head straight), so that they find ways that ants
-	// don't use yet; any shorter one shortens the trails. They explore for search_distance meters, then follow the trails
-	// too.
+	// The share of ants that explore at any time. Explorers don't follow the trails but walk randomly (until they smell
+	// food or the nest, where they head straight), so that they find ways that ants don't use yet; any shorter one shortens
+	// the trails. An ant explores or not for as long as it takes to walk search_distance at a time.
 	float explorer_share;
 };
 

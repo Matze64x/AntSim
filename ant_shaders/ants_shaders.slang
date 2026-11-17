@@ -20,7 +20,7 @@ ConstantBuffer<PushConstants> pc;
 // searching ant gives up the more likely the longer its way home is, and heads home like a carrying one, taking food that
 // it comes across on the way. A trail tells the shortest way that any ant knew, and an ant takes a shorter way that its
 // cell's trail tells, so trails lead along the shortest ways ants walked, around walls too, and any ant that strays onto
-// a shorter way shortens them. Some ants explore for a while instead of following the trails (see
+// a shorter way shortens them. A share of the ants explores instead of following the trails (see
 // BehaviorSettings::explorer_share).
 
 // How far an ant walks before its heading has drifted randomly away from where it started, in meters. Real foraging ants
@@ -197,10 +197,16 @@ float2 get_free_dir(Ant ant, Walls walls, float step_length, float side)
 	return -ant.dir;
 }
 
-// an ant that leaves the nest or picks up food explores on its way with the chance BehaviorSettings::explorer_share
-float get_exploration(BehaviorSettings behavior, inout Random rng)
+// Whether the ant explores (see BehaviorSettings::explorer_share), derived from its index and the time, so that exactly
+// that share of ants explores at any time, however long their trips are. Time is divided into slots of a search distance's
+// walk, each ant's shifted by its own offset so that the ants don't all switch at once, and in each slot an ant explores
+// with the chance of the share.
+bool is_explorer(uint ant_index, uint step, BehaviorSettings behavior)
 {
-	return rng.get_float() < behavior.explorer_share ? behavior.search_distance : 0.0;
+	const float slot_duration = behavior.search_distance / ANT_SPEED;
+	const float offset = hash_to_unit_float(pcg_hash(ant_index + 1726354u)) * slot_duration;
+	const uint slot = uint((float(step) * SIMULATION_TIME_STEP + offset) / slot_duration);
+	return hash_to_unit_float(pcg_hash(ant_index ^ pcg_hash(slot + 3141592u))) < behavior.explorer_share;
 }
 
 // The ant puts down its food, and the nest grows to the level of its food. The level follows from the food that this
@@ -232,7 +238,6 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	{
 		ant.pos = nest.pos;
 		ant.dir = rotate(float2(1.0, 0.0), rng.get_float(0.0, 2.0 * float.getPi()));
-		ant.exploration_left = get_exploration(behavior, rng);
 	}
 
 	// see BehaviorSettings::search_distance
@@ -249,7 +254,7 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	const Optional<float2> source_pos = antennae.get_nearest_source_pos(trail, ant.pos);
 	if (source_pos.hasValue) turn += turn_to(ant, source_pos.value, max_turn);
 	// an explorer just walks randomly
-	else if (ant.exploration_left <= 0.0)
+	else if (!is_explorer(ant_index, pc.step, behavior))
 	{
 		if (antennae.smell_trail(trail)) turn += antennae.get_turn(trail, false, max_turn);
 		else if (heads_home) turn += turn_to(ant, get_nest_estimate(nest, ant_index, ant.distance_walked), max_turn);
@@ -272,7 +277,6 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	{
 		ant.pos = next_pos;
 		ant.distance_walked += step_length;
-		ant.exploration_left = max(ant.exploration_left - step_length, 0.0);
 	}
 
 	// the nest is a point, its cell, so that all ways to it meet there and ants leaving it find any of them
@@ -284,7 +288,6 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 		if (ant.state == AntState::CarryFood) deliver_food(nest_pointer);
 		ant.state = AntState::Search;
 		ant.dir = -ant.dir;
-		ant.exploration_left = get_exploration(behavior, rng);
 	}
 	ants[ant_index] = ant;
 }
@@ -300,8 +303,6 @@ void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	if (ant_index >= pc.ant_count) return;
 	vkte::Buffer<Ant> ants = vkte::get_buffer<Ant>(pc.ants);
 	const HashGrid hash_grid = HashGrid(vkte::get_buffer<HashGridCell>(pc.hash_grid).get_pointer(), pc.hash_grid_capacity, pc.step);
-	const BehaviorSettings behavior = vkte::get_single_element_buffer<UniformBufferData>(pc.uniform_buffer).behavior;
-	Random rng = Random(ant_index + pc.ant_count * pc.step + 43598763);
 	Ant ant = ants[ant_index];
 	const int2 hash_grid_pos = get_hash_grid_pos(ant.pos);
 	// the trail that leads back where the ant came from
@@ -319,7 +320,6 @@ void update_hash_grid(uint3 dispatch_thread_id : SV_DispatchThreadID)
 			ant.state = AntState::CarryFood;
 			ant.dir = -ant.dir;
 			ant.distance_walked = 0.0;
-			ant.exploration_left = get_exploration(behavior, rng);
 		}
 	}
 	ants[ant_index] = ant;

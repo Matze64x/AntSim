@@ -23,7 +23,4 @@ struct Ant
 	// trail it crosses that tells a shorter one, and which it lays in its trail.
 	float distance_walked;
 	AntState state;
-	// The meters an explorer still explores on its way, 0 for an ant that follows the trails (see
-	// BehaviorSettings::explorer_share).
-	float exploration_left;
 };
