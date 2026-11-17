@@ -37,8 +37,8 @@ static const float TURN_RATE = 6.0;
 static const float ANTENNA_ANGLE = radians(40.0);
 // how far ahead of the ant its antennae smell, in meters
 static const float ANTENNA_LENGTH = 0.1;
-// the error that path integration adds, in meters per square root of a meter walked (a random walk of the estimate)
-static const float PATH_INTEGRATION_ERROR = 0.03;
+// the error that path integration adds, in meters per square root of a meter walked (see get_nest_estimate)
+static const float PATH_INTEGRATION_ERROR = 0.015;
 // an ant that a wall blocks tries headings turned by multiples of this angle, the smallest first
 static const float WALL_TURN_ANGLE = radians(30.0);
 // An ant that a wall blocks slides along it but keeps heading into it by up to this angle, so that it keeps pressing
@@ -160,6 +160,19 @@ struct Antennae
 	}
 }
 
+// Where the ant believes the nest is. Like real ants, it adds up the way it walked (path integration), with an error
+// that grows like a random walk's, with the square root of its way back. The error's direction and scale are the ant's
+// own, a normally distributed vector from its index, which gives the estimates of all ants a random walk's spread
+// without storing an estimate per ant.
+float2 get_nest_estimate(Nest nest, uint ant_index, float distance_walked)
+{
+	Random rng = Random(ant_index * 2654435761u + 1013904223u);
+	// Box-Muller
+	const float radius = sqrt(-2.0 * log(1.0 - rng.get_float()));
+	const float angle = rng.get_float(0.0, 2.0 * float.getPi());
+	return nest.pos + rotate(float2(radius, 0.0), angle) * PATH_INTEGRATION_ERROR * sqrt(distance_walked);
+}
+
 // the turn, at most max_turn either way, toward a point
 float turn_to(Ant ant, float2 point, float max_turn)
 {
@@ -219,7 +232,6 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	{
 		ant.pos = nest.pos;
 		ant.dir = rotate(float2(1.0, 0.0), rng.get_float(0.0, 2.0 * float.getPi()));
-		ant.nest_estimate = nest.pos;
 		ant.exploration_left = get_exploration(behavior, rng);
 	}
 
@@ -240,11 +252,9 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 	else if (ant.exploration_left <= 0.0)
 	{
 		if (antennae.smell_trail(trail)) turn += antennae.get_turn(trail, false, max_turn);
-		else if (heads_home) turn += turn_to(ant, ant.nest_estimate, max_turn);
+		else if (heads_home) turn += turn_to(ant, get_nest_estimate(nest, ant_index, ant.distance_walked), max_turn);
 		else turn += antennae.get_turn(Trail::Home, true, max_turn);
 	}
-	// an ant heading home that smells the nest knows where it is
-	if (heads_home && source_pos.hasValue) ant.nest_estimate = nest.pos;
 	ant.dir = normalize(rotate(ant.dir, turn));
 	const float step_length = ANT_SPEED * SIMULATION_TIME_STEP;
 	// an ant in a wall (painted onto it) walks out of it in any direction
@@ -264,15 +274,10 @@ void step_ants(uint3 dispatch_thread_id : SV_DispatchThreadID)
 		ant.distance_walked += step_length;
 		ant.exploration_left = max(ant.exploration_left - step_length, 0.0);
 	}
-	ant.nest_estimate += rng.get_float2_in_disk() * PATH_INTEGRATION_ERROR * sqrt(step_length);
 
 	// the nest is a point, its cell, so that all ways to it meet there and ants leaving it find any of them
 	const bool in_nest = all(get_hash_grid_pos(ant.pos) == get_hash_grid_pos(nest.pos));
-	if (in_nest)
-	{
-		ant.nest_estimate = nest.pos;
-		ant.distance_walked = 0.0;
-	}
+	if (in_nest) ant.distance_walked = 0.0;
 	// an ant back home searches again, from where it came
 	if (in_nest && heads_home)
 	{
